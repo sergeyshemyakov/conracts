@@ -57,7 +57,8 @@ contract OPCrossChainBatcher {
     /// @param message      Message payload to call target with.
     event FailedRelayedBatchEntry(uint256 indexed source, bytes32 indexed prevMsgHash, bytes message);
 
-    IL2ToL2CrossDomainMessenger MESSENGER = IL2ToL2CrossDomainMessenger(Predeploys.L2_TO_L2_CROSS_DOMAIN_MESSENGER);
+    IL2ToL2CrossDomainMessenger internal constant MESSENGER =
+        IL2ToL2CrossDomainMessenger(Predeploys.L2_TO_L2_CROSS_DOMAIN_MESSENGER);
 
     /// @notice Sends a message to some target address on a destination chain. The message can be executed on
     /// the executing chain only after a message with the given hash was successfully relayed.
@@ -95,7 +96,7 @@ contract OPCrossChainBatcher {
 
         if (MESSENGER.crossDomainMessageSender() != address(this)) revert InvalidCrossDomainSender();
 
-        if (_prevMsgHash != 0 && MESSENGER.successfulMessages(_prevMsgHash)) revert BatchDependencyNotRelayed();
+        if (_prevMsgHash != 0 && !MESSENGER.successfulMessages(_prevMsgHash)) revert BatchDependencyNotRelayed();
 
         bool success = SafeCall.call(_target, 0, _message);
         uint256 source = MESSENGER.crossDomainMessageSource();

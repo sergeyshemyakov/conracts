@@ -12,27 +12,28 @@ import { BaseDeployIO } from "scripts/utils/BaseDeployIO.sol";
 import { IResourceMetering } from "src/L1/interfaces/IResourceMetering.sol";
 import { ISuperchainConfig } from "src/L1/interfaces/ISuperchainConfig.sol";
 import { IBigStepper } from "src/dispute/interfaces/IBigStepper.sol";
-import { Constants } from "src/libraries/Constants.sol";
 import { Predeploys } from "src/libraries/Predeploys.sol";
+import { Constants } from "src/libraries/Constants.sol";
+import { Constants as ScriptConstants } from "scripts/libraries/Constants.sol";
 
-import { ProxyAdmin } from "src/universal/ProxyAdmin.sol";
-import { Proxy } from "src/universal/Proxy.sol";
+import { IProxyAdmin } from "src/universal/interfaces/IProxyAdmin.sol";
+import { IProxy } from "src/universal/interfaces/IProxy.sol";
 
-import { AddressManager } from "src/legacy/AddressManager.sol";
-import { DelayedWETH } from "src/dispute/DelayedWETH.sol";
-import { DisputeGameFactory } from "src/dispute/DisputeGameFactory.sol";
-import { AnchorStateRegistry } from "src/dispute/AnchorStateRegistry.sol";
-import { FaultDisputeGame } from "src/dispute/FaultDisputeGame.sol";
-import { PermissionedDisputeGame } from "src/dispute/PermissionedDisputeGame.sol";
-import { Claim, GameType, GameTypes, Hash, OutputRoot } from "src/dispute/lib/Types.sol";
+import { IAddressManager } from "src/legacy/interfaces/IAddressManager.sol";
+import { IDelayedWETH } from "src/dispute/interfaces/IDelayedWETH.sol";
+import { IDisputeGameFactory } from "src/dispute/interfaces/IDisputeGameFactory.sol";
+import { IAnchorStateRegistry } from "src/dispute/interfaces/IAnchorStateRegistry.sol";
+import { IFaultDisputeGame } from "src/dispute/interfaces/IFaultDisputeGame.sol";
+import { IPermissionedDisputeGame } from "src/dispute/interfaces/IPermissionedDisputeGame.sol";
+import { Claim, Duration, GameType, GameTypes, Hash } from "src/dispute/lib/Types.sol";
 
 import { OPContractsManager } from "src/L1/OPContractsManager.sol";
-import { OptimismPortal2 } from "src/L1/OptimismPortal2.sol";
-import { SystemConfig } from "src/L1/SystemConfig.sol";
-import { L1CrossDomainMessenger } from "src/L1/L1CrossDomainMessenger.sol";
-import { L1ERC721Bridge } from "src/L1/L1ERC721Bridge.sol";
-import { L1StandardBridge } from "src/L1/L1StandardBridge.sol";
-import { OptimismMintableERC20Factory } from "src/universal/OptimismMintableERC20Factory.sol";
+import { IOptimismPortal2 } from "src/L1/interfaces/IOptimismPortal2.sol";
+import { ISystemConfig } from "src/L1/interfaces/ISystemConfig.sol";
+import { IL1CrossDomainMessenger } from "src/L1/interfaces/IL1CrossDomainMessenger.sol";
+import { IL1ERC721Bridge } from "src/L1/interfaces/IL1ERC721Bridge.sol";
+import { IL1StandardBridge } from "src/L1/interfaces/IL1StandardBridge.sol";
+import { IOptimismMintableERC20Factory } from "src/universal/interfaces/IOptimismMintableERC20Factory.sol";
 
 contract DeployOPChainInput is BaseDeployIO {
     address internal _opChainProxyAdminOwner;
@@ -47,6 +48,16 @@ contract DeployOPChainInput is BaseDeployIO {
     uint32 internal _blobBaseFeeScalar;
     uint256 internal _l2ChainId;
     OPContractsManager internal _opcmProxy;
+    string internal _saltMixer;
+    uint64 internal _gasLimit;
+
+    // Configurable dispute game inputs
+    GameType internal _disputeGameType;
+    Claim internal _disputeAbsolutePrestate;
+    uint256 internal _disputeMaxGameDepth;
+    uint256 internal _disputeSplitDepth;
+    Duration internal _disputeClockExtension;
+    Duration internal _disputeMaxClockDuration;
 
     function set(bytes4 _sel, address _addr) public {
         require(_addr != address(0), "DeployOPChainInput: cannot set zero address");
@@ -68,9 +79,32 @@ contract DeployOPChainInput is BaseDeployIO {
         } else if (_sel == this.l2ChainId.selector) {
             require(_value != 0 && _value != block.chainid, "DeployOPChainInput: invalid l2ChainId");
             _l2ChainId = _value;
+        } else if (_sel == this.gasLimit.selector) {
+            _gasLimit = SafeCast.toUint64(_value);
+        } else if (_sel == this.disputeGameType.selector) {
+            _disputeGameType = GameType.wrap(SafeCast.toUint32(_value));
+        } else if (_sel == this.disputeMaxGameDepth.selector) {
+            _disputeMaxGameDepth = SafeCast.toUint64(_value);
+        } else if (_sel == this.disputeSplitDepth.selector) {
+            _disputeSplitDepth = SafeCast.toUint64(_value);
+        } else if (_sel == this.disputeClockExtension.selector) {
+            _disputeClockExtension = Duration.wrap(SafeCast.toUint64(_value));
+        } else if (_sel == this.disputeMaxClockDuration.selector) {
+            _disputeMaxClockDuration = Duration.wrap(SafeCast.toUint64(_value));
         } else {
             revert("DeployOPChainInput: unknown selector");
         }
+    }
+
+    function set(bytes4 _sel, string memory _value) public {
+        require((bytes(_value).length != 0), "DeployImplementationsInput: cannot set empty string");
+        if (_sel == this.saltMixer.selector) _saltMixer = _value;
+        else revert("DeployOPChainInput: unknown selector");
+    }
+
+    function set(bytes4 _sel, bytes32 _value) public {
+        if (_sel == this.disputeAbsolutePrestate.selector) _disputeAbsolutePrestate = Claim.wrap(_value);
+        else revert("DeployImplementationsInput: unknown selector");
     }
 
     function opChainProxyAdminOwner() public view returns (address) {
@@ -128,60 +162,87 @@ contract DeployOPChainInput is BaseDeployIO {
         // because to to update to the permissionless game, we will need to update its starting
         // anchor root and deploy a new permissioned dispute game contract anyway.
         //
-        // You can `console.logBytes(abi.encode(defaultStartingAnchorRoots))` to get the bytes that
+        // You can `console.logBytes(abi.encode(ScriptConstants.DEFAULT_STARTING_ANCHOR_ROOTS()))` to get the bytes that
         // are hardcoded into `op-chain-ops/deployer/opcm/opchain.go`
-        AnchorStateRegistry.StartingAnchorRoot[] memory defaultStartingAnchorRoots =
-            new AnchorStateRegistry.StartingAnchorRoot[](1);
-        defaultStartingAnchorRoots[0] = AnchorStateRegistry.StartingAnchorRoot({
-            gameType: GameTypes.PERMISSIONED_CANNON,
-            outputRoot: OutputRoot({ root: Hash.wrap(bytes32(hex"dead")), l2BlockNumber: 0 })
-        });
-        return abi.encode(defaultStartingAnchorRoots);
+
+        return abi.encode(ScriptConstants.DEFAULT_STARTING_ANCHOR_ROOTS());
     }
 
     function opcmProxy() public returns (OPContractsManager) {
         require(address(_opcmProxy) != address(0), "DeployOPChainInput: not set");
         DeployUtils.assertValidContractAddress(address(_opcmProxy));
-        DeployUtils.assertImplementationSet(address(_opcmProxy));
+        DeployUtils.assertERC1967ImplementationSet(address(_opcmProxy));
         return _opcmProxy;
+    }
+
+    function saltMixer() public view returns (string memory) {
+        return _saltMixer;
+    }
+
+    function gasLimit() public view returns (uint64) {
+        return _gasLimit;
+    }
+
+    function disputeGameType() public view returns (GameType) {
+        return _disputeGameType;
+    }
+
+    function disputeAbsolutePrestate() public view returns (Claim) {
+        return _disputeAbsolutePrestate;
+    }
+
+    function disputeMaxGameDepth() public view returns (uint256) {
+        return _disputeMaxGameDepth;
+    }
+
+    function disputeSplitDepth() public view returns (uint256) {
+        return _disputeSplitDepth;
+    }
+
+    function disputeClockExtension() public view returns (Duration) {
+        return _disputeClockExtension;
+    }
+
+    function disputeMaxClockDuration() public view returns (Duration) {
+        return _disputeMaxClockDuration;
     }
 }
 
 contract DeployOPChainOutput is BaseDeployIO {
-    ProxyAdmin internal _opChainProxyAdmin;
-    AddressManager internal _addressManager;
-    L1ERC721Bridge internal _l1ERC721BridgeProxy;
-    SystemConfig internal _systemConfigProxy;
-    OptimismMintableERC20Factory internal _optimismMintableERC20FactoryProxy;
-    L1StandardBridge internal _l1StandardBridgeProxy;
-    L1CrossDomainMessenger internal _l1CrossDomainMessengerProxy;
-    OptimismPortal2 internal _optimismPortalProxy;
-    DisputeGameFactory internal _disputeGameFactoryProxy;
-    AnchorStateRegistry internal _anchorStateRegistryProxy;
-    AnchorStateRegistry internal _anchorStateRegistryImpl;
-    FaultDisputeGame internal _faultDisputeGame;
-    PermissionedDisputeGame internal _permissionedDisputeGame;
-    DelayedWETH internal _delayedWETHPermissionedGameProxy;
-    DelayedWETH internal _delayedWETHPermissionlessGameProxy;
+    IProxyAdmin internal _opChainProxyAdmin;
+    IAddressManager internal _addressManager;
+    IL1ERC721Bridge internal _l1ERC721BridgeProxy;
+    ISystemConfig internal _systemConfigProxy;
+    IOptimismMintableERC20Factory internal _optimismMintableERC20FactoryProxy;
+    IL1StandardBridge internal _l1StandardBridgeProxy;
+    IL1CrossDomainMessenger internal _l1CrossDomainMessengerProxy;
+    IOptimismPortal2 internal _optimismPortalProxy;
+    IDisputeGameFactory internal _disputeGameFactoryProxy;
+    IAnchorStateRegistry internal _anchorStateRegistryProxy;
+    IAnchorStateRegistry internal _anchorStateRegistryImpl;
+    IFaultDisputeGame internal _faultDisputeGame;
+    IPermissionedDisputeGame internal _permissionedDisputeGame;
+    IDelayedWETH internal _delayedWETHPermissionedGameProxy;
+    IDelayedWETH internal _delayedWETHPermissionlessGameProxy;
 
-    function set(bytes4 sel, address _addr) public {
+    function set(bytes4 _sel, address _addr) public {
         require(_addr != address(0), "DeployOPChainOutput: cannot set zero address");
         // forgefmt: disable-start
-        if (sel == this.opChainProxyAdmin.selector) _opChainProxyAdmin = ProxyAdmin(_addr) ;
-        else if (sel == this.addressManager.selector) _addressManager = AddressManager(_addr) ;
-        else if (sel == this.l1ERC721BridgeProxy.selector) _l1ERC721BridgeProxy = L1ERC721Bridge(_addr) ;
-        else if (sel == this.systemConfigProxy.selector) _systemConfigProxy = SystemConfig(_addr) ;
-        else if (sel == this.optimismMintableERC20FactoryProxy.selector) _optimismMintableERC20FactoryProxy = OptimismMintableERC20Factory(_addr) ;
-        else if (sel == this.l1StandardBridgeProxy.selector) _l1StandardBridgeProxy = L1StandardBridge(payable(_addr)) ;
-        else if (sel == this.l1CrossDomainMessengerProxy.selector) _l1CrossDomainMessengerProxy = L1CrossDomainMessenger(_addr) ;
-        else if (sel == this.optimismPortalProxy.selector) _optimismPortalProxy = OptimismPortal2(payable(_addr)) ;
-        else if (sel == this.disputeGameFactoryProxy.selector) _disputeGameFactoryProxy = DisputeGameFactory(_addr) ;
-        else if (sel == this.anchorStateRegistryProxy.selector) _anchorStateRegistryProxy = AnchorStateRegistry(_addr) ;
-        else if (sel == this.anchorStateRegistryImpl.selector) _anchorStateRegistryImpl = AnchorStateRegistry(_addr) ;
-        else if (sel == this.faultDisputeGame.selector) _faultDisputeGame = FaultDisputeGame(_addr) ;
-        else if (sel == this.permissionedDisputeGame.selector) _permissionedDisputeGame = PermissionedDisputeGame(_addr) ;
-        else if (sel == this.delayedWETHPermissionedGameProxy.selector) _delayedWETHPermissionedGameProxy = DelayedWETH(payable(_addr)) ;
-        else if (sel == this.delayedWETHPermissionlessGameProxy.selector) _delayedWETHPermissionlessGameProxy = DelayedWETH(payable(_addr)) ;
+        if (_sel == this.opChainProxyAdmin.selector) _opChainProxyAdmin = IProxyAdmin(_addr) ;
+        else if (_sel == this.addressManager.selector) _addressManager = IAddressManager(_addr) ;
+        else if (_sel == this.l1ERC721BridgeProxy.selector) _l1ERC721BridgeProxy = IL1ERC721Bridge(_addr) ;
+        else if (_sel == this.systemConfigProxy.selector) _systemConfigProxy = ISystemConfig(_addr) ;
+        else if (_sel == this.optimismMintableERC20FactoryProxy.selector) _optimismMintableERC20FactoryProxy = IOptimismMintableERC20Factory(_addr) ;
+        else if (_sel == this.l1StandardBridgeProxy.selector) _l1StandardBridgeProxy = IL1StandardBridge(payable(_addr)) ;
+        else if (_sel == this.l1CrossDomainMessengerProxy.selector) _l1CrossDomainMessengerProxy = IL1CrossDomainMessenger(_addr) ;
+        else if (_sel == this.optimismPortalProxy.selector) _optimismPortalProxy = IOptimismPortal2(payable(_addr)) ;
+        else if (_sel == this.disputeGameFactoryProxy.selector) _disputeGameFactoryProxy = IDisputeGameFactory(_addr) ;
+        else if (_sel == this.anchorStateRegistryProxy.selector) _anchorStateRegistryProxy = IAnchorStateRegistry(_addr) ;
+        else if (_sel == this.anchorStateRegistryImpl.selector) _anchorStateRegistryImpl = IAnchorStateRegistry(_addr) ;
+        else if (_sel == this.faultDisputeGame.selector) _faultDisputeGame = IFaultDisputeGame(_addr) ;
+        else if (_sel == this.permissionedDisputeGame.selector) _permissionedDisputeGame = IPermissionedDisputeGame(_addr) ;
+        else if (_sel == this.delayedWETHPermissionedGameProxy.selector) _delayedWETHPermissionedGameProxy = IDelayedWETH(payable(_addr)) ;
+        else if (_sel == this.delayedWETHPermissionlessGameProxy.selector) _delayedWETHPermissionlessGameProxy = IDelayedWETH(payable(_addr)) ;
         else revert("DeployOPChainOutput: unknown selector");
         // forgefmt: disable-end
     }
@@ -205,86 +266,98 @@ contract DeployOPChainOutput is BaseDeployIO {
             address(_anchorStateRegistryImpl),
             // address(_faultDisputeGame),
             address(_permissionedDisputeGame),
-            address(_delayedWETHPermissionedGameProxy),
-            address(_delayedWETHPermissionlessGameProxy)
+            address(_delayedWETHPermissionedGameProxy)
         );
+        // TODO: Eventually switch from Permissioned to Permissionless. Add this address back in.
+        // address(_delayedWETHPermissionlessGameProxy)
+
         DeployUtils.assertValidContractAddresses(Solarray.extend(addrs1, addrs2));
 
         assertValidDeploy(_doi);
     }
 
-    function opChainProxyAdmin() public view returns (ProxyAdmin) {
+    function opChainProxyAdmin() public view returns (IProxyAdmin) {
         DeployUtils.assertValidContractAddress(address(_opChainProxyAdmin));
         return _opChainProxyAdmin;
     }
 
-    function addressManager() public view returns (AddressManager) {
+    function addressManager() public view returns (IAddressManager) {
         DeployUtils.assertValidContractAddress(address(_addressManager));
         return _addressManager;
     }
 
-    function l1ERC721BridgeProxy() public view returns (L1ERC721Bridge) {
+    function l1ERC721BridgeProxy() public returns (IL1ERC721Bridge) {
         DeployUtils.assertValidContractAddress(address(_l1ERC721BridgeProxy));
+        DeployUtils.assertERC1967ImplementationSet(address(_l1ERC721BridgeProxy));
         return _l1ERC721BridgeProxy;
     }
 
-    function systemConfigProxy() public view returns (SystemConfig) {
+    function systemConfigProxy() public returns (ISystemConfig) {
         DeployUtils.assertValidContractAddress(address(_systemConfigProxy));
+        DeployUtils.assertERC1967ImplementationSet(address(_systemConfigProxy));
         return _systemConfigProxy;
     }
 
-    function optimismMintableERC20FactoryProxy() public view returns (OptimismMintableERC20Factory) {
+    function optimismMintableERC20FactoryProxy() public returns (IOptimismMintableERC20Factory) {
         DeployUtils.assertValidContractAddress(address(_optimismMintableERC20FactoryProxy));
+        DeployUtils.assertERC1967ImplementationSet(address(_optimismMintableERC20FactoryProxy));
         return _optimismMintableERC20FactoryProxy;
     }
 
-    function l1StandardBridgeProxy() public view returns (L1StandardBridge) {
+    function l1StandardBridgeProxy() public returns (IL1StandardBridge) {
         DeployUtils.assertValidContractAddress(address(_l1StandardBridgeProxy));
+        DeployUtils.assertL1ChugSplashImplementationSet(address(_l1StandardBridgeProxy));
         return _l1StandardBridgeProxy;
     }
 
-    function l1CrossDomainMessengerProxy() public view returns (L1CrossDomainMessenger) {
+    function l1CrossDomainMessengerProxy() public view returns (IL1CrossDomainMessenger) {
         DeployUtils.assertValidContractAddress(address(_l1CrossDomainMessengerProxy));
+        DeployUtils.assertResolvedDelegateProxyImplementationSet("OVM_L1CrossDomainMessenger", addressManager());
         return _l1CrossDomainMessengerProxy;
     }
 
-    function optimismPortalProxy() public view returns (OptimismPortal2) {
+    function optimismPortalProxy() public returns (IOptimismPortal2) {
         DeployUtils.assertValidContractAddress(address(_optimismPortalProxy));
+        DeployUtils.assertERC1967ImplementationSet(address(_optimismPortalProxy));
         return _optimismPortalProxy;
     }
 
-    function disputeGameFactoryProxy() public view returns (DisputeGameFactory) {
+    function disputeGameFactoryProxy() public returns (IDisputeGameFactory) {
         DeployUtils.assertValidContractAddress(address(_disputeGameFactoryProxy));
+        DeployUtils.assertERC1967ImplementationSet(address(_disputeGameFactoryProxy));
         return _disputeGameFactoryProxy;
     }
 
-    function anchorStateRegistryProxy() public view returns (AnchorStateRegistry) {
+    function anchorStateRegistryProxy() public returns (IAnchorStateRegistry) {
         DeployUtils.assertValidContractAddress(address(_anchorStateRegistryProxy));
+        DeployUtils.assertERC1967ImplementationSet(address(_anchorStateRegistryProxy));
         return _anchorStateRegistryProxy;
     }
 
-    function anchorStateRegistryImpl() public view returns (AnchorStateRegistry) {
+    function anchorStateRegistryImpl() public view returns (IAnchorStateRegistry) {
         DeployUtils.assertValidContractAddress(address(_anchorStateRegistryImpl));
         return _anchorStateRegistryImpl;
     }
 
-    function faultDisputeGame() public view returns (FaultDisputeGame) {
+    function faultDisputeGame() public view returns (IFaultDisputeGame) {
         DeployUtils.assertValidContractAddress(address(_faultDisputeGame));
         return _faultDisputeGame;
     }
 
-    function permissionedDisputeGame() public view returns (PermissionedDisputeGame) {
+    function permissionedDisputeGame() public view returns (IPermissionedDisputeGame) {
         DeployUtils.assertValidContractAddress(address(_permissionedDisputeGame));
         return _permissionedDisputeGame;
     }
 
-    function delayedWETHPermissionedGameProxy() public view returns (DelayedWETH) {
+    function delayedWETHPermissionedGameProxy() public returns (IDelayedWETH) {
         DeployUtils.assertValidContractAddress(address(_delayedWETHPermissionedGameProxy));
+        DeployUtils.assertERC1967ImplementationSet(address(_delayedWETHPermissionedGameProxy));
         return _delayedWETHPermissionedGameProxy;
     }
 
-    function delayedWETHPermissionlessGameProxy() public view returns (DelayedWETH) {
-        DeployUtils.assertValidContractAddress(address(_delayedWETHPermissionlessGameProxy));
+    function delayedWETHPermissionlessGameProxy() public view returns (IDelayedWETH) {
+        // TODO: Eventually switch from Permissioned to Permissionless. Add this check back in.
+        // DeployUtils.assertValidContractAddress(address(_delayedWETHPermissionlessGameProxy));
         return _delayedWETHPermissionlessGameProxy;
     }
 
@@ -293,7 +366,7 @@ contract DeployOPChainOutput is BaseDeployIO {
     function assertValidDeploy(DeployOPChainInput _doi) internal {
         assertValidAnchorStateRegistryImpl(_doi);
         assertValidAnchorStateRegistryProxy(_doi);
-        assertValidDelayedWETHs(_doi);
+        assertValidDelayedWETH(_doi);
         assertValidDisputeGameFactory(_doi);
         assertValidL1CrossDomainMessenger(_doi);
         assertValidL1ERC721Bridge(_doi);
@@ -302,13 +375,21 @@ contract DeployOPChainOutput is BaseDeployIO {
         assertValidOptimismPortal(_doi);
         assertValidPermissionedDisputeGame(_doi);
         assertValidSystemConfig(_doi);
+        assertValidAddressManager(_doi);
+        assertValidOPChainProxyAdmin(_doi);
     }
 
     function assertValidPermissionedDisputeGame(DeployOPChainInput _doi) internal {
-        PermissionedDisputeGame game = permissionedDisputeGame();
+        IPermissionedDisputeGame game = permissionedDisputeGame();
 
         require(GameType.unwrap(game.gameType()) == GameType.unwrap(GameTypes.PERMISSIONED_CANNON), "DPG-10");
-        require(Claim.unwrap(game.absolutePrestate()) == bytes32(hex"dead"), "DPG-20");
+        // This hex string is the absolutePrestate of the latest op-program release, see where the
+        // `EXPECTED_PRESTATE_HASH` is defined in `config.yml`.
+        require(
+            Claim.unwrap(game.absolutePrestate())
+                == bytes32(hex"038512e02c4c3f7bdaec27d00edf55b7155e0905301e1a88083e4e0a6764d54c"),
+            "DPG-20"
+        );
 
         OPContractsManager opcm = _doi.opcmProxy();
         (address mips,) = opcm.implementations(opcm.latestRelease(), "MIPS");
@@ -317,11 +398,16 @@ contract DeployOPChainOutput is BaseDeployIO {
         require(address(game.weth()) == address(delayedWETHPermissionedGameProxy()), "DPG-40");
         require(address(game.anchorStateRegistry()) == address(anchorStateRegistryProxy()), "DPG-50");
         require(game.l2ChainId() == _doi.l2ChainId(), "DPG-60");
+        require(game.l2BlockNumber() == 0, "DPG-70");
+        require(Duration.unwrap(game.clockExtension()) == 10800, "DPG-80");
+        require(Duration.unwrap(game.maxClockDuration()) == 302400, "DPG-110");
+        require(game.splitDepth() == 30, "DPG-90");
+        require(game.maxGameDepth() == 73, "DPG-100");
     }
 
     function assertValidAnchorStateRegistryProxy(DeployOPChainInput) internal {
         // First we check the proxy as itself.
-        Proxy proxy = Proxy(payable(address(anchorStateRegistryProxy())));
+        IProxy proxy = IProxy(payable(address(anchorStateRegistryProxy())));
         vm.prank(address(0));
         address admin = proxy.admin();
         require(admin == address(opChainProxyAdmin()), "ANCHORP-10");
@@ -335,10 +421,14 @@ contract DeployOPChainOutput is BaseDeployIO {
         require(
             address(anchorStateRegistryProxy().disputeGameFactory()) == address(disputeGameFactoryProxy()), "ANCHORP-30"
         );
+
+        (Hash actualRoot,) = anchorStateRegistryProxy().anchors(GameTypes.PERMISSIONED_CANNON);
+        bytes32 expectedRoot = 0xdead000000000000000000000000000000000000000000000000000000000000;
+        require(Hash.unwrap(actualRoot) == expectedRoot, "ANCHORP-40");
     }
 
-    function assertValidAnchorStateRegistryImpl(DeployOPChainInput) internal view {
-        AnchorStateRegistry registry = anchorStateRegistryImpl();
+    function assertValidAnchorStateRegistryImpl(DeployOPChainInput) internal {
+        IAnchorStateRegistry registry = anchorStateRegistryImpl();
 
         DeployUtils.assertInitialized({ _contractAddress: address(registry), _slot: 0, _offset: 0 });
 
@@ -346,7 +436,7 @@ contract DeployOPChainOutput is BaseDeployIO {
     }
 
     function assertValidSystemConfig(DeployOPChainInput _doi) internal {
-        SystemConfig systemConfig = systemConfigProxy();
+        ISystemConfig systemConfig = systemConfigProxy();
 
         DeployUtils.assertInitialized({ _contractAddress: address(systemConfig), _slot: 0, _offset: 0 });
 
@@ -354,7 +444,7 @@ contract DeployOPChainOutput is BaseDeployIO {
         require(systemConfig.basefeeScalar() == _doi.basefeeScalar(), "SYSCON-20");
         require(systemConfig.blobbasefeeScalar() == _doi.blobBaseFeeScalar(), "SYSCON-30");
         require(systemConfig.batcherHash() == bytes32(uint256(uint160(_doi.batcher()))), "SYSCON-40");
-        require(systemConfig.gasLimit() == uint64(30000000), "SYSCON-50"); // TODO allow other gas limits?
+        require(systemConfig.gasLimit() == uint64(30_000_000), "SYSCON-50");
         require(systemConfig.unsafeBlockSigner() == _doi.unsafeBlockSigner(), "SYSCON-60");
         require(systemConfig.scalar() >> 248 == 1, "SYSCON-70");
 
@@ -385,7 +475,7 @@ contract DeployOPChainOutput is BaseDeployIO {
     }
 
     function assertValidL1CrossDomainMessenger(DeployOPChainInput _doi) internal {
-        L1CrossDomainMessenger messenger = l1CrossDomainMessengerProxy();
+        IL1CrossDomainMessenger messenger = l1CrossDomainMessengerProxy();
 
         DeployUtils.assertInitialized({ _contractAddress: address(messenger), _slot: 0, _offset: 20 });
 
@@ -401,8 +491,8 @@ contract DeployOPChainOutput is BaseDeployIO {
     }
 
     function assertValidL1StandardBridge(DeployOPChainInput _doi) internal {
-        L1StandardBridge bridge = l1StandardBridgeProxy();
-        L1CrossDomainMessenger messenger = l1CrossDomainMessengerProxy();
+        IL1StandardBridge bridge = l1StandardBridgeProxy();
+        IL1CrossDomainMessenger messenger = l1CrossDomainMessengerProxy();
 
         DeployUtils.assertInitialized({ _contractAddress: address(bridge), _slot: 0, _offset: 0 });
 
@@ -413,8 +503,8 @@ contract DeployOPChainOutput is BaseDeployIO {
         require(address(bridge.superchainConfig()) == address(_doi.opcmProxy().superchainConfig()), "L1SB-50");
     }
 
-    function assertValidOptimismMintableERC20Factory(DeployOPChainInput) internal view {
-        OptimismMintableERC20Factory factory = optimismMintableERC20FactoryProxy();
+    function assertValidOptimismMintableERC20Factory(DeployOPChainInput) internal {
+        IOptimismMintableERC20Factory factory = optimismMintableERC20FactoryProxy();
 
         DeployUtils.assertInitialized({ _contractAddress: address(factory), _slot: 0, _offset: 0 });
 
@@ -423,7 +513,7 @@ contract DeployOPChainOutput is BaseDeployIO {
     }
 
     function assertValidL1ERC721Bridge(DeployOPChainInput _doi) internal {
-        L1ERC721Bridge bridge = l1ERC721BridgeProxy();
+        IL1ERC721Bridge bridge = l1ERC721BridgeProxy();
 
         DeployUtils.assertInitialized({ _contractAddress: address(bridge), _slot: 0, _offset: 0 });
 
@@ -436,7 +526,7 @@ contract DeployOPChainOutput is BaseDeployIO {
     }
 
     function assertValidOptimismPortal(DeployOPChainInput _doi) internal {
-        OptimismPortal2 portal = optimismPortalProxy();
+        IOptimismPortal2 portal = optimismPortalProxy();
         ISuperchainConfig superchainConfig = ISuperchainConfig(address(_doi.opcmProxy().superchainConfig()));
 
         require(address(portal.disputeGameFactory()) == address(disputeGameFactoryProxy()), "PORTAL-10");
@@ -451,19 +541,81 @@ contract DeployOPChainOutput is BaseDeployIO {
         require(vm.load(address(portal), bytes32(uint256(61))) == bytes32(0));
     }
 
-    function assertValidDisputeGameFactory(DeployOPChainInput) internal view {
-        DisputeGameFactory factory = disputeGameFactoryProxy();
+    function assertValidDisputeGameFactory(DeployOPChainInput _doi) internal {
+        IDisputeGameFactory factory = disputeGameFactoryProxy();
 
         DeployUtils.assertInitialized({ _contractAddress: address(factory), _slot: 0, _offset: 0 });
 
         require(
             address(factory.gameImpls(GameTypes.PERMISSIONED_CANNON)) == address(permissionedDisputeGame()), "DF-10"
         );
-        require(factory.owner() == address(opChainProxyAdmin()), "DF-20");
+        require(factory.owner() == address(_doi.opChainProxyAdminOwner()), "DF-20");
     }
 
-    function assertValidDelayedWETHs(DeployOPChainInput) internal view {
-        // TODO add in once FP support is added.
+    function assertValidDelayedWETH(DeployOPChainInput _doi) internal {
+        IDelayedWETH permissioned = delayedWETHPermissionedGameProxy();
+
+        require(permissioned.owner() == address(_doi.opChainProxyAdminOwner()), "DWETH-10");
+
+        IProxy proxy = IProxy(payable(address(permissioned)));
+        vm.prank(address(0));
+        address admin = proxy.admin();
+        require(admin == address(opChainProxyAdmin()), "DWETH-20");
+    }
+
+    function assertValidAddressManager(DeployOPChainInput) internal view {
+        require(addressManager().owner() == address(opChainProxyAdmin()), "AM-10");
+    }
+
+    function assertValidOPChainProxyAdmin(DeployOPChainInput _doi) internal {
+        IProxyAdmin admin = opChainProxyAdmin();
+        require(admin.owner() == _doi.opChainProxyAdminOwner(), "OPCPA-10");
+        require(
+            admin.getProxyImplementation(address(l1CrossDomainMessengerProxy()))
+                == DeployUtils.assertResolvedDelegateProxyImplementationSet("OVM_L1CrossDomainMessenger", addressManager()),
+            "OPCPA-20"
+        );
+        require(address(admin.addressManager()) == address(addressManager()), "OPCPA-30");
+        require(
+            admin.getProxyImplementation(address(l1StandardBridgeProxy()))
+                == DeployUtils.assertL1ChugSplashImplementationSet(address(l1StandardBridgeProxy())),
+            "OPCPA-40"
+        );
+        require(
+            admin.getProxyImplementation(address(l1ERC721BridgeProxy()))
+                == DeployUtils.assertERC1967ImplementationSet(address(l1ERC721BridgeProxy())),
+            "OPCPA-50"
+        );
+        require(
+            admin.getProxyImplementation(address(optimismPortalProxy()))
+                == DeployUtils.assertERC1967ImplementationSet(address(optimismPortalProxy())),
+            "OPCPA-60"
+        );
+        require(
+            admin.getProxyImplementation(address(systemConfigProxy()))
+                == DeployUtils.assertERC1967ImplementationSet(address(systemConfigProxy())),
+            "OPCPA-70"
+        );
+        require(
+            admin.getProxyImplementation(address(optimismMintableERC20FactoryProxy()))
+                == DeployUtils.assertERC1967ImplementationSet(address(optimismMintableERC20FactoryProxy())),
+            "OPCPA-80"
+        );
+        require(
+            admin.getProxyImplementation(address(disputeGameFactoryProxy()))
+                == DeployUtils.assertERC1967ImplementationSet(address(disputeGameFactoryProxy())),
+            "OPCPA-90"
+        );
+        require(
+            admin.getProxyImplementation(address(delayedWETHPermissionedGameProxy()))
+                == DeployUtils.assertERC1967ImplementationSet(address(delayedWETHPermissionedGameProxy())),
+            "OPCPA-100"
+        );
+        require(
+            admin.getProxyImplementation(address(anchorStateRegistryProxy()))
+                == DeployUtils.assertERC1967ImplementationSet(address(anchorStateRegistryProxy())),
+            "OPCPA-110"
+        );
     }
 }
 
@@ -486,7 +638,15 @@ contract DeployOPChain is Script {
             basefeeScalar: _doi.basefeeScalar(),
             blobBasefeeScalar: _doi.blobBaseFeeScalar(),
             l2ChainId: _doi.l2ChainId(),
-            startingAnchorRoots: _doi.startingAnchorRoots()
+            startingAnchorRoots: _doi.startingAnchorRoots(),
+            saltMixer: _doi.saltMixer(),
+            gasLimit: _doi.gasLimit(),
+            disputeGameType: _doi.disputeGameType(),
+            disputeAbsolutePrestate: _doi.disputeAbsolutePrestate(),
+            disputeMaxGameDepth: _doi.disputeMaxGameDepth(),
+            disputeSplitDepth: _doi.disputeSplitDepth(),
+            disputeClockExtension: _doi.disputeClockExtension(),
+            disputeMaxClockDuration: _doi.disputeMaxClockDuration()
         });
 
         vm.broadcast(msg.sender);
@@ -506,7 +666,8 @@ contract DeployOPChain is Script {
         // vm.label(address(deployOutput.faultDisputeGame), "faultDisputeGame");
         vm.label(address(deployOutput.permissionedDisputeGame), "permissionedDisputeGame");
         vm.label(address(deployOutput.delayedWETHPermissionedGameProxy), "delayedWETHPermissionedGameProxy");
-        vm.label(address(deployOutput.delayedWETHPermissionlessGameProxy), "delayedWETHPermissionlessGameProxy");
+        // TODO: Eventually switch from Permissioned to Permissionless.
+        // vm.label(address(deployOutput.delayedWETHPermissionlessGameProxy), "delayedWETHPermissionlessGameProxy");
 
         _doo.set(_doo.opChainProxyAdmin.selector, address(deployOutput.opChainProxyAdmin));
         _doo.set(_doo.addressManager.selector, address(deployOutput.addressManager));
@@ -524,9 +685,11 @@ contract DeployOPChain is Script {
         // _doo.set(_doo.faultDisputeGame.selector, address(deployOutput.faultDisputeGame));
         _doo.set(_doo.permissionedDisputeGame.selector, address(deployOutput.permissionedDisputeGame));
         _doo.set(_doo.delayedWETHPermissionedGameProxy.selector, address(deployOutput.delayedWETHPermissionedGameProxy));
-        _doo.set(
-            _doo.delayedWETHPermissionlessGameProxy.selector, address(deployOutput.delayedWETHPermissionlessGameProxy)
-        );
+        // TODO: Eventually switch from Permissioned to Permissionless.
+        // _doo.set(
+        //     _doo.delayedWETHPermissionlessGameProxy.selector,
+        // address(deployOutput.delayedWETHPermissionlessGameProxy)
+        // );
 
         _doo.checkOutput(_doi);
     }

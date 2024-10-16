@@ -7,38 +7,33 @@ import { LibString } from "@solady/utils/LibString.sol";
 
 import { IResourceMetering } from "src/L1/interfaces/IResourceMetering.sol";
 import { ISuperchainConfig } from "src/L1/interfaces/ISuperchainConfig.sol";
+import { IProtocolVersions } from "src/L1/interfaces/IProtocolVersions.sol";
+import { ISystemConfigV160 } from "src/L1/interfaces/ISystemConfigV160.sol";
+import { IL1CrossDomainMessengerV160 } from "src/L1/interfaces/IL1CrossDomainMessengerV160.sol";
+import { IL1StandardBridgeV160 } from "src/L1/interfaces/IL1StandardBridgeV160.sol";
 
 import { Constants } from "src/libraries/Constants.sol";
 import { Predeploys } from "src/libraries/Predeploys.sol";
 import { Bytes } from "src/libraries/Bytes.sol";
 
-import { ProxyAdmin } from "src/universal/ProxyAdmin.sol";
-import { Proxy } from "src/universal/Proxy.sol";
-import { L1ChugSplashProxy } from "src/legacy/L1ChugSplashProxy.sol";
-import { ResolvedDelegateProxy } from "src/legacy/ResolvedDelegateProxy.sol";
-import { AddressManager } from "src/legacy/AddressManager.sol";
+import { IProxy } from "src/universal/interfaces/IProxy.sol";
 
-import { DelayedWETH } from "src/dispute/DelayedWETH.sol";
-import { PreimageOracle } from "src/cannon/PreimageOracle.sol";
+import { IDelayedWETH } from "src/dispute/interfaces/IDelayedWETH.sol";
 import { IPreimageOracle } from "src/cannon/interfaces/IPreimageOracle.sol";
-import { MIPS } from "src/cannon/MIPS.sol";
-import { DisputeGameFactory } from "src/dispute/DisputeGameFactory.sol";
-import { AnchorStateRegistry } from "src/dispute/AnchorStateRegistry.sol";
-import { PermissionedDisputeGame } from "src/dispute/PermissionedDisputeGame.sol";
+import { IMIPS } from "src/cannon/interfaces/IMIPS.sol";
+import { IDisputeGameFactory } from "src/dispute/interfaces/IDisputeGameFactory.sol";
 
-import { SuperchainConfig } from "src/L1/SuperchainConfig.sol";
-import { ProtocolVersions } from "src/L1/ProtocolVersions.sol";
 import { OPContractsManager } from "src/L1/OPContractsManager.sol";
-import { OptimismPortal2 } from "src/L1/OptimismPortal2.sol";
-import { SystemConfig } from "src/L1/SystemConfig.sol";
-import { L1CrossDomainMessenger } from "src/L1/L1CrossDomainMessenger.sol";
-import { L1ERC721Bridge } from "src/L1/L1ERC721Bridge.sol";
-import { L1StandardBridge } from "src/L1/L1StandardBridge.sol";
-import { OptimismMintableERC20Factory } from "src/universal/OptimismMintableERC20Factory.sol";
+import { IOptimismPortal2 } from "src/L1/interfaces/IOptimismPortal2.sol";
+import { ISystemConfig } from "src/L1/interfaces/ISystemConfig.sol";
+import { IL1CrossDomainMessenger } from "src/L1/interfaces/IL1CrossDomainMessenger.sol";
+import { IL1ERC721Bridge } from "src/L1/interfaces/IL1ERC721Bridge.sol";
+import { IL1StandardBridge } from "src/L1/interfaces/IL1StandardBridge.sol";
+import { IOptimismMintableERC20Factory } from "src/universal/interfaces/IOptimismMintableERC20Factory.sol";
 
 import { OPContractsManagerInterop } from "src/L1/OPContractsManagerInterop.sol";
-import { OptimismPortalInterop } from "src/L1/OptimismPortalInterop.sol";
-import { SystemConfigInterop } from "src/L1/SystemConfigInterop.sol";
+import { IOptimismPortalInterop } from "src/L1/interfaces/IOptimismPortalInterop.sol";
+import { ISystemConfigInterop } from "src/L1/interfaces/ISystemConfigInterop.sol";
 
 import { Blueprint } from "src/libraries/Blueprint.sol";
 
@@ -54,51 +49,57 @@ contract DeployImplementationsInput is BaseDeployIO {
     uint256 internal _challengePeriodSeconds;
     uint256 internal _proofMaturityDelaySeconds;
     uint256 internal _disputeGameFinalityDelaySeconds;
+    uint256 internal _mipsVersion;
 
     // The release version to set OPCM implementations for, of the format `op-contracts/vX.Y.Z`.
     string internal _release;
 
     // Outputs from DeploySuperchain.s.sol.
-    SuperchainConfig internal _superchainConfigProxy;
-    ProtocolVersions internal _protocolVersionsProxy;
+    ISuperchainConfig internal _superchainConfigProxy;
+    IProtocolVersions internal _protocolVersionsProxy;
 
     string internal _standardVersionsToml;
 
-    function set(bytes4 sel, uint256 _value) public {
+    address internal _opcmProxyOwner;
+
+    function set(bytes4 _sel, uint256 _value) public {
         require(_value != 0, "DeployImplementationsInput: cannot set zero value");
 
-        if (sel == this.withdrawalDelaySeconds.selector) {
+        if (_sel == this.withdrawalDelaySeconds.selector) {
             _withdrawalDelaySeconds = _value;
-        } else if (sel == this.minProposalSizeBytes.selector) {
+        } else if (_sel == this.minProposalSizeBytes.selector) {
             _minProposalSizeBytes = _value;
-        } else if (sel == this.challengePeriodSeconds.selector) {
+        } else if (_sel == this.challengePeriodSeconds.selector) {
             require(_value <= type(uint64).max, "DeployImplementationsInput: challengePeriodSeconds too large");
             _challengePeriodSeconds = _value;
-        } else if (sel == this.proofMaturityDelaySeconds.selector) {
+        } else if (_sel == this.proofMaturityDelaySeconds.selector) {
             _proofMaturityDelaySeconds = _value;
-        } else if (sel == this.disputeGameFinalityDelaySeconds.selector) {
+        } else if (_sel == this.disputeGameFinalityDelaySeconds.selector) {
             _disputeGameFinalityDelaySeconds = _value;
+        } else if (_sel == this.mipsVersion.selector) {
+            _mipsVersion = _value;
         } else {
             revert("DeployImplementationsInput: unknown selector");
         }
     }
 
-    function set(bytes4 sel, string memory _value) public {
+    function set(bytes4 _sel, string memory _value) public {
         require(!LibString.eq(_value, ""), "DeployImplementationsInput: cannot set empty string");
-        if (sel == this.release.selector) _release = _value;
-        else if (sel == this.standardVersionsToml.selector) _standardVersionsToml = _value;
+        if (_sel == this.release.selector) _release = _value;
+        else if (_sel == this.standardVersionsToml.selector) _standardVersionsToml = _value;
         else revert("DeployImplementationsInput: unknown selector");
     }
 
-    function set(bytes4 sel, address _addr) public {
+    function set(bytes4 _sel, address _addr) public {
         require(_addr != address(0), "DeployImplementationsInput: cannot set zero address");
-        if (sel == this.superchainConfigProxy.selector) _superchainConfigProxy = SuperchainConfig(_addr);
-        else if (sel == this.protocolVersionsProxy.selector) _protocolVersionsProxy = ProtocolVersions(_addr);
+        if (_sel == this.superchainConfigProxy.selector) _superchainConfigProxy = ISuperchainConfig(_addr);
+        else if (_sel == this.protocolVersionsProxy.selector) _protocolVersionsProxy = IProtocolVersions(_addr);
+        else if (_sel == this.opcmProxyOwner.selector) _opcmProxyOwner = _addr;
         else revert("DeployImplementationsInput: unknown selector");
     }
 
-    function set(bytes4 sel, bytes32 _value) public {
-        if (sel == this.salt.selector) _salt = _value;
+    function set(bytes4 _sel, bytes32 _value) public {
+        if (_sel == this.salt.selector) _salt = _value;
         else revert("DeployImplementationsInput: unknown selector");
     }
 
@@ -135,6 +136,11 @@ contract DeployImplementationsInput is BaseDeployIO {
         return _disputeGameFinalityDelaySeconds;
     }
 
+    function mipsVersion() public view returns (uint256) {
+        require(_mipsVersion != 0, "DeployImplementationsInput: not set");
+        return _mipsVersion;
+    }
+
     function release() public view returns (string memory) {
         require(!LibString.eq(_release, ""), "DeployImplementationsInput: not set");
         return _release;
@@ -145,56 +151,52 @@ contract DeployImplementationsInput is BaseDeployIO {
         return _standardVersionsToml;
     }
 
-    function superchainConfigProxy() public view returns (SuperchainConfig) {
+    function superchainConfigProxy() public view returns (ISuperchainConfig) {
         require(address(_superchainConfigProxy) != address(0), "DeployImplementationsInput: not set");
         return _superchainConfigProxy;
     }
 
-    function protocolVersionsProxy() public view returns (ProtocolVersions) {
+    function protocolVersionsProxy() public view returns (IProtocolVersions) {
         require(address(_protocolVersionsProxy) != address(0), "DeployImplementationsInput: not set");
         return _protocolVersionsProxy;
     }
 
-    function superchainProxyAdmin() public returns (ProxyAdmin) {
-        SuperchainConfig proxy = this.superchainConfigProxy();
-        // Can infer the superchainProxyAdmin from the superchainConfigProxy.
-        vm.prank(address(0));
-        ProxyAdmin proxyAdmin = ProxyAdmin(Proxy(payable(address(proxy))).admin());
-        require(address(proxyAdmin) != address(0), "DeployImplementationsInput: not set");
-        return proxyAdmin;
+    function opcmProxyOwner() public view returns (address) {
+        require(address(_opcmProxyOwner) != address(0), "DeployImplementationsInput: not set");
+        return _opcmProxyOwner;
     }
 }
 
 contract DeployImplementationsOutput is BaseDeployIO {
     OPContractsManager internal _opcmProxy;
     OPContractsManager internal _opcmImpl;
-    DelayedWETH internal _delayedWETHImpl;
-    OptimismPortal2 internal _optimismPortalImpl;
-    PreimageOracle internal _preimageOracleSingleton;
-    MIPS internal _mipsSingleton;
-    SystemConfig internal _systemConfigImpl;
-    L1CrossDomainMessenger internal _l1CrossDomainMessengerImpl;
-    L1ERC721Bridge internal _l1ERC721BridgeImpl;
-    L1StandardBridge internal _l1StandardBridgeImpl;
-    OptimismMintableERC20Factory internal _optimismMintableERC20FactoryImpl;
-    DisputeGameFactory internal _disputeGameFactoryImpl;
+    IDelayedWETH internal _delayedWETHImpl;
+    IOptimismPortal2 internal _optimismPortalImpl;
+    IPreimageOracle internal _preimageOracleSingleton;
+    IMIPS internal _mipsSingleton;
+    ISystemConfig internal _systemConfigImpl;
+    IL1CrossDomainMessenger internal _l1CrossDomainMessengerImpl;
+    IL1ERC721Bridge internal _l1ERC721BridgeImpl;
+    IL1StandardBridge internal _l1StandardBridgeImpl;
+    IOptimismMintableERC20Factory internal _optimismMintableERC20FactoryImpl;
+    IDisputeGameFactory internal _disputeGameFactoryImpl;
 
-    function set(bytes4 sel, address _addr) public {
+    function set(bytes4 _sel, address _addr) public {
         require(_addr != address(0), "DeployImplementationsOutput: cannot set zero address");
 
         // forgefmt: disable-start
-        if (sel == this.opcmProxy.selector) _opcmProxy = OPContractsManager(payable(_addr));
-        else if (sel == this.opcmImpl.selector) _opcmImpl = OPContractsManager(payable(_addr));
-        else if (sel == this.optimismPortalImpl.selector) _optimismPortalImpl = OptimismPortal2(payable(_addr));
-        else if (sel == this.delayedWETHImpl.selector) _delayedWETHImpl = DelayedWETH(payable(_addr));
-        else if (sel == this.preimageOracleSingleton.selector) _preimageOracleSingleton = PreimageOracle(_addr);
-        else if (sel == this.mipsSingleton.selector) _mipsSingleton = MIPS(_addr);
-        else if (sel == this.systemConfigImpl.selector) _systemConfigImpl = SystemConfig(_addr);
-        else if (sel == this.l1CrossDomainMessengerImpl.selector) _l1CrossDomainMessengerImpl = L1CrossDomainMessenger(_addr);
-        else if (sel == this.l1ERC721BridgeImpl.selector) _l1ERC721BridgeImpl = L1ERC721Bridge(_addr);
-        else if (sel == this.l1StandardBridgeImpl.selector) _l1StandardBridgeImpl = L1StandardBridge(payable(_addr));
-        else if (sel == this.optimismMintableERC20FactoryImpl.selector) _optimismMintableERC20FactoryImpl = OptimismMintableERC20Factory(_addr);
-        else if (sel == this.disputeGameFactoryImpl.selector) _disputeGameFactoryImpl = DisputeGameFactory(_addr);
+        if (_sel == this.opcmProxy.selector) _opcmProxy = OPContractsManager(payable(_addr));
+        else if (_sel == this.opcmImpl.selector) _opcmImpl = OPContractsManager(payable(_addr));
+        else if (_sel == this.optimismPortalImpl.selector) _optimismPortalImpl = IOptimismPortal2(payable(_addr));
+        else if (_sel == this.delayedWETHImpl.selector) _delayedWETHImpl = IDelayedWETH(payable(_addr));
+        else if (_sel == this.preimageOracleSingleton.selector) _preimageOracleSingleton = IPreimageOracle(_addr);
+        else if (_sel == this.mipsSingleton.selector) _mipsSingleton = IMIPS(_addr);
+        else if (_sel == this.systemConfigImpl.selector) _systemConfigImpl = ISystemConfig(_addr);
+        else if (_sel == this.l1CrossDomainMessengerImpl.selector) _l1CrossDomainMessengerImpl = IL1CrossDomainMessenger(_addr);
+        else if (_sel == this.l1ERC721BridgeImpl.selector) _l1ERC721BridgeImpl = IL1ERC721Bridge(_addr);
+        else if (_sel == this.l1StandardBridgeImpl.selector) _l1StandardBridgeImpl = IL1StandardBridge(payable(_addr));
+        else if (_sel == this.optimismMintableERC20FactoryImpl.selector) _optimismMintableERC20FactoryImpl = IOptimismMintableERC20Factory(_addr);
+        else if (_sel == this.disputeGameFactoryImpl.selector) _disputeGameFactoryImpl = IDisputeGameFactory(_addr);
         else revert("DeployImplementationsOutput: unknown selector");
         // forgefmt: disable-end
     }
@@ -227,7 +229,7 @@ contract DeployImplementationsOutput is BaseDeployIO {
 
     function opcmProxy() public returns (OPContractsManager) {
         DeployUtils.assertValidContractAddress(address(_opcmProxy));
-        DeployUtils.assertImplementationSet(address(_opcmProxy));
+        DeployUtils.assertERC1967ImplementationSet(address(_opcmProxy));
         return _opcmProxy;
     }
 
@@ -236,52 +238,52 @@ contract DeployImplementationsOutput is BaseDeployIO {
         return _opcmImpl;
     }
 
-    function optimismPortalImpl() public view returns (OptimismPortal2) {
+    function optimismPortalImpl() public view returns (IOptimismPortal2) {
         DeployUtils.assertValidContractAddress(address(_optimismPortalImpl));
         return _optimismPortalImpl;
     }
 
-    function delayedWETHImpl() public view returns (DelayedWETH) {
+    function delayedWETHImpl() public view returns (IDelayedWETH) {
         DeployUtils.assertValidContractAddress(address(_delayedWETHImpl));
         return _delayedWETHImpl;
     }
 
-    function preimageOracleSingleton() public view returns (PreimageOracle) {
+    function preimageOracleSingleton() public view returns (IPreimageOracle) {
         DeployUtils.assertValidContractAddress(address(_preimageOracleSingleton));
         return _preimageOracleSingleton;
     }
 
-    function mipsSingleton() public view returns (MIPS) {
+    function mipsSingleton() public view returns (IMIPS) {
         DeployUtils.assertValidContractAddress(address(_mipsSingleton));
         return _mipsSingleton;
     }
 
-    function systemConfigImpl() public view returns (SystemConfig) {
+    function systemConfigImpl() public view returns (ISystemConfig) {
         DeployUtils.assertValidContractAddress(address(_systemConfigImpl));
         return _systemConfigImpl;
     }
 
-    function l1CrossDomainMessengerImpl() public view returns (L1CrossDomainMessenger) {
+    function l1CrossDomainMessengerImpl() public view returns (IL1CrossDomainMessenger) {
         DeployUtils.assertValidContractAddress(address(_l1CrossDomainMessengerImpl));
         return _l1CrossDomainMessengerImpl;
     }
 
-    function l1ERC721BridgeImpl() public view returns (L1ERC721Bridge) {
+    function l1ERC721BridgeImpl() public view returns (IL1ERC721Bridge) {
         DeployUtils.assertValidContractAddress(address(_l1ERC721BridgeImpl));
         return _l1ERC721BridgeImpl;
     }
 
-    function l1StandardBridgeImpl() public view returns (L1StandardBridge) {
+    function l1StandardBridgeImpl() public view returns (IL1StandardBridge) {
         DeployUtils.assertValidContractAddress(address(_l1StandardBridgeImpl));
         return _l1StandardBridgeImpl;
     }
 
-    function optimismMintableERC20FactoryImpl() public view returns (OptimismMintableERC20Factory) {
+    function optimismMintableERC20FactoryImpl() public view returns (IOptimismMintableERC20Factory) {
         DeployUtils.assertValidContractAddress(address(_optimismMintableERC20FactoryImpl));
         return _optimismMintableERC20FactoryImpl;
     }
 
-    function disputeGameFactoryImpl() public view returns (DisputeGameFactory) {
+    function disputeGameFactoryImpl() public view returns (IDisputeGameFactory) {
         DeployUtils.assertValidContractAddress(address(_disputeGameFactoryImpl));
         return _disputeGameFactoryImpl;
     }
@@ -304,10 +306,10 @@ contract DeployImplementationsOutput is BaseDeployIO {
 
     function assertValidOpcmProxy(DeployImplementationsInput _dii) internal {
         // First we check the proxy as itself.
-        Proxy proxy = Proxy(payable(address(opcmProxy())));
+        IProxy proxy = IProxy(payable(address(opcmProxy())));
         vm.prank(address(0));
         address admin = proxy.admin();
-        require(admin == address(_dii.superchainProxyAdmin()), "OPCMP-10");
+        require(admin == address(_dii.opcmProxyOwner()), "OPCMP-10");
 
         // Then we check the proxy as OPCM.
         DeployUtils.assertInitialized({ _contractAddress: address(opcmProxy()), _slot: 0, _offset: 0 });
@@ -317,7 +319,7 @@ contract DeployImplementationsOutput is BaseDeployIO {
     }
 
     function assertValidOpcmImpl(DeployImplementationsInput _dii) internal {
-        Proxy proxy = Proxy(payable(address(opcmProxy())));
+        IProxy proxy = IProxy(payable(address(opcmProxy())));
         vm.prank(address(0));
         OPContractsManager impl = OPContractsManager(proxy.implementation());
         DeployUtils.assertInitialized({ _contractAddress: address(impl), _slot: 0, _offset: 0 });
@@ -326,7 +328,7 @@ contract DeployImplementationsOutput is BaseDeployIO {
     }
 
     function assertValidOptimismPortalImpl(DeployImplementationsInput) internal view {
-        OptimismPortal2 portal = optimismPortalImpl();
+        IOptimismPortal2 portal = optimismPortalImpl();
 
         DeployUtils.assertInitialized({ _contractAddress: address(portal), _slot: 0, _offset: 0 });
 
@@ -341,7 +343,7 @@ contract DeployImplementationsOutput is BaseDeployIO {
     }
 
     function assertValidDelayedWETHImpl(DeployImplementationsInput _dii) internal view {
-        DelayedWETH delayedWETH = delayedWETHImpl();
+        IDelayedWETH delayedWETH = delayedWETHImpl();
 
         DeployUtils.assertInitialized({ _contractAddress: address(delayedWETH), _slot: 0, _offset: 0 });
 
@@ -351,20 +353,20 @@ contract DeployImplementationsOutput is BaseDeployIO {
     }
 
     function assertValidPreimageOracleSingleton(DeployImplementationsInput _dii) internal view {
-        PreimageOracle oracle = preimageOracleSingleton();
+        IPreimageOracle oracle = preimageOracleSingleton();
 
         require(oracle.minProposalSize() == _dii.minProposalSizeBytes(), "PO-10");
         require(oracle.challengePeriod() == _dii.challengePeriodSeconds(), "PO-20");
     }
 
     function assertValidMipsSingleton(DeployImplementationsInput) internal view {
-        MIPS mips = mipsSingleton();
+        IMIPS mips = mipsSingleton();
 
         require(address(mips.oracle()) == address(preimageOracleSingleton()), "MIPS-10");
     }
 
     function assertValidSystemConfigImpl(DeployImplementationsInput) internal view {
-        SystemConfig systemConfig = systemConfigImpl();
+        ISystemConfig systemConfig = systemConfigImpl();
 
         DeployUtils.assertInitialized({ _contractAddress: address(systemConfig), _slot: 0, _offset: 0 });
 
@@ -396,7 +398,7 @@ contract DeployImplementationsOutput is BaseDeployIO {
     }
 
     function assertValidL1CrossDomainMessengerImpl(DeployImplementationsInput) internal view {
-        L1CrossDomainMessenger messenger = l1CrossDomainMessengerImpl();
+        IL1CrossDomainMessenger messenger = l1CrossDomainMessengerImpl();
 
         DeployUtils.assertInitialized({ _contractAddress: address(messenger), _slot: 0, _offset: 20 });
 
@@ -411,7 +413,7 @@ contract DeployImplementationsOutput is BaseDeployIO {
     }
 
     function assertValidL1ERC721BridgeImpl(DeployImplementationsInput) internal view {
-        L1ERC721Bridge bridge = l1ERC721BridgeImpl();
+        IL1ERC721Bridge bridge = l1ERC721BridgeImpl();
 
         DeployUtils.assertInitialized({ _contractAddress: address(bridge), _slot: 0, _offset: 0 });
 
@@ -423,7 +425,7 @@ contract DeployImplementationsOutput is BaseDeployIO {
     }
 
     function assertValidL1StandardBridgeImpl(DeployImplementationsInput) internal view {
-        L1StandardBridge bridge = l1StandardBridgeImpl();
+        IL1StandardBridge bridge = l1StandardBridgeImpl();
 
         DeployUtils.assertInitialized({ _contractAddress: address(bridge), _slot: 0, _offset: 0 });
 
@@ -435,7 +437,7 @@ contract DeployImplementationsOutput is BaseDeployIO {
     }
 
     function assertValidOptimismMintableERC20FactoryImpl(DeployImplementationsInput) internal view {
-        OptimismMintableERC20Factory factory = optimismMintableERC20FactoryImpl();
+        IOptimismMintableERC20Factory factory = optimismMintableERC20FactoryImpl();
 
         DeployUtils.assertInitialized({ _contractAddress: address(factory), _slot: 0, _offset: 0 });
 
@@ -444,7 +446,7 @@ contract DeployImplementationsOutput is BaseDeployIO {
     }
 
     function assertValidDisputeGameFactoryImpl(DeployImplementationsInput) internal view {
-        DisputeGameFactory factory = disputeGameFactoryImpl();
+        IDisputeGameFactory factory = disputeGameFactoryImpl();
 
         DeployUtils.assertInitialized({ _contractAddress: address(factory), _slot: 0, _offset: 0 });
 
@@ -479,7 +481,7 @@ contract DeployImplementations is Script {
     // --- OP Contracts Manager ---
 
     function opcmSystemConfigSetter(
-        DeployImplementationsInput,
+        DeployImplementationsInput _dii,
         DeployImplementationsOutput _dio
     )
         internal
@@ -487,9 +489,55 @@ contract DeployImplementations is Script {
         virtual
         returns (OPContractsManager.ImplementationSetter memory)
     {
+        // When configuring OPCM during Solidity tests, we are using the latest SystemConfig.sol
+        // version in this repo, which contains Custom Gas Token (CGT) features. This CGT version
+        // has a different `initialize` signature than the SystemConfig version that was released
+        // as part of `op-contracts/v1.6.0`, which is no longer in the repo. When running this
+        // script's bytecode for a production deploy of OPCM at `op-contracts/v1.6.0`, we need to
+        // use the ISystemConfigV160 interface instead of ISystemConfig. Therefore the selector used
+        // is a function of the `release` passed in by the caller.
+        bytes4 selector = LibString.eq(_dii.release(), "op-contracts/v1.6.0")
+            ? ISystemConfigV160.initialize.selector
+            : ISystemConfig.initialize.selector;
         return OPContractsManager.ImplementationSetter({
             name: "SystemConfig",
-            info: OPContractsManager.Implementation(address(_dio.systemConfigImpl()), SystemConfig.initialize.selector)
+            info: OPContractsManager.Implementation(address(_dio.systemConfigImpl()), selector)
+        });
+    }
+
+    function l1CrossDomainMessengerConfigSetter(
+        DeployImplementationsInput _dii,
+        DeployImplementationsOutput _dio
+    )
+        internal
+        view
+        virtual
+        returns (OPContractsManager.ImplementationSetter memory)
+    {
+        bytes4 selector = LibString.eq(_dii.release(), "op-contracts/v1.6.0")
+            ? IL1CrossDomainMessengerV160.initialize.selector
+            : IL1CrossDomainMessenger.initialize.selector;
+        return OPContractsManager.ImplementationSetter({
+            name: "L1CrossDomainMessenger",
+            info: OPContractsManager.Implementation(address(_dio.l1CrossDomainMessengerImpl()), selector)
+        });
+    }
+
+    function l1StandardBridgeConfigSetter(
+        DeployImplementationsInput _dii,
+        DeployImplementationsOutput _dio
+    )
+        internal
+        view
+        virtual
+        returns (OPContractsManager.ImplementationSetter memory)
+    {
+        bytes4 selector = LibString.eq(_dii.release(), "op-contracts/v1.6.0")
+            ? IL1StandardBridgeV160.initialize.selector
+            : IL1StandardBridge.initialize.selector;
+        return OPContractsManager.ImplementationSetter({
+            name: "L1StandardBridge",
+            info: OPContractsManager.Implementation(address(_dio.l1StandardBridgeImpl()), selector)
         });
     }
 
@@ -505,10 +553,15 @@ contract DeployImplementations is Script {
         virtual
         returns (OPContractsManager opcmProxy_)
     {
-        ProxyAdmin proxyAdmin = _dii.superchainProxyAdmin();
+        address opcmProxyOwner = _dii.opcmProxyOwner();
 
         vm.broadcast(msg.sender);
-        Proxy proxy = new Proxy(address(msg.sender));
+        IProxy proxy = IProxy(
+            DeployUtils.create1({
+                _name: "Proxy",
+                _args: DeployUtils.encodeConstructor(abi.encodeCall(IProxy.__constructor__, (msg.sender)))
+            })
+        );
 
         deployOPContractsManagerImpl(_dii, _dio);
         OPContractsManager opcmImpl = _dio.opcmImpl();
@@ -521,7 +574,7 @@ contract DeployImplementations is Script {
             address(opcmImpl), abi.encodeWithSelector(opcmImpl.initialize.selector, initializerInputs)
         );
 
-        proxy.changeAdmin(address(proxyAdmin)); // transfer ownership of Proxy contract to the ProxyAdmin contract
+        proxy.changeAdmin(address(opcmProxyOwner)); // transfer ownership of Proxy contract to the ProxyAdmin contract
         vm.stopBroadcast();
 
         opcmProxy_ = OPContractsManager(address(proxy));
@@ -542,53 +595,45 @@ contract DeployImplementations is Script {
         OPContractsManager.Blueprints memory blueprints;
 
         vm.startBroadcast(msg.sender);
-        blueprints.addressManager = deployBytecode(Blueprint.blueprintDeployerBytecode(type(AddressManager).creationCode), salt);
-        blueprints.proxy = deployBytecode(Blueprint.blueprintDeployerBytecode(type(Proxy).creationCode), salt);
-        blueprints.proxyAdmin = deployBytecode(Blueprint.blueprintDeployerBytecode(type(ProxyAdmin).creationCode), salt);
-        blueprints.l1ChugSplashProxy = deployBytecode(Blueprint.blueprintDeployerBytecode(type(L1ChugSplashProxy).creationCode), salt);
-        blueprints.resolvedDelegateProxy = deployBytecode(Blueprint.blueprintDeployerBytecode(type(ResolvedDelegateProxy).creationCode), salt);
-        blueprints.anchorStateRegistry = deployBytecode(Blueprint.blueprintDeployerBytecode(type(AnchorStateRegistry).creationCode), salt);
-        (blueprints.permissionedDisputeGame1, blueprints.permissionedDisputeGame2)  = deployBigBytecode(type(PermissionedDisputeGame).creationCode, salt);
+        blueprints.addressManager = deployBytecode(Blueprint.blueprintDeployerBytecode(vm.getCode("AddressManager")), salt);
+        blueprints.proxy = deployBytecode(Blueprint.blueprintDeployerBytecode(vm.getCode("Proxy")), salt);
+        blueprints.proxyAdmin = deployBytecode(Blueprint.blueprintDeployerBytecode(vm.getCode("ProxyAdmin")), salt);
+        blueprints.l1ChugSplashProxy = deployBytecode(Blueprint.blueprintDeployerBytecode(vm.getCode("L1ChugSplashProxy")), salt);
+        blueprints.resolvedDelegateProxy = deployBytecode(Blueprint.blueprintDeployerBytecode(vm.getCode("ResolvedDelegateProxy")), salt);
+        blueprints.anchorStateRegistry = deployBytecode(Blueprint.blueprintDeployerBytecode(vm.getCode("AnchorStateRegistry")), salt);
+        (blueprints.permissionedDisputeGame1, blueprints.permissionedDisputeGame2)  = deployBigBytecode(vm.getCode("PermissionedDisputeGame"), salt);
         vm.stopBroadcast();
         // forgefmt: disable-end
 
         OPContractsManager.ImplementationSetter[] memory setters = new OPContractsManager.ImplementationSetter[](9);
         setters[0] = OPContractsManager.ImplementationSetter({
             name: "L1ERC721Bridge",
-            info: OPContractsManager.Implementation(address(_dio.l1ERC721BridgeImpl()), L1ERC721Bridge.initialize.selector)
+            info: OPContractsManager.Implementation(address(_dio.l1ERC721BridgeImpl()), IL1ERC721Bridge.initialize.selector)
         });
         setters[1] = OPContractsManager.ImplementationSetter({
             name: "OptimismPortal",
-            info: OPContractsManager.Implementation(address(_dio.optimismPortalImpl()), OptimismPortal2.initialize.selector)
+            info: OPContractsManager.Implementation(
+                address(_dio.optimismPortalImpl()), IOptimismPortal2.initialize.selector
+            )
         });
         setters[2] = opcmSystemConfigSetter(_dii, _dio);
         setters[3] = OPContractsManager.ImplementationSetter({
             name: "OptimismMintableERC20Factory",
             info: OPContractsManager.Implementation(
-                address(_dio.optimismMintableERC20FactoryImpl()), OptimismMintableERC20Factory.initialize.selector
+                address(_dio.optimismMintableERC20FactoryImpl()), IOptimismMintableERC20Factory.initialize.selector
             )
         });
-        setters[4] = OPContractsManager.ImplementationSetter({
-            name: "L1CrossDomainMessenger",
-            info: OPContractsManager.Implementation(
-                address(_dio.l1CrossDomainMessengerImpl()), L1CrossDomainMessenger.initialize.selector
-            )
-        });
-        setters[5] = OPContractsManager.ImplementationSetter({
-            name: "L1StandardBridge",
-            info: OPContractsManager.Implementation(
-                address(_dio.l1StandardBridgeImpl()), L1StandardBridge.initialize.selector
-            )
-        });
+        setters[4] = l1CrossDomainMessengerConfigSetter(_dii, _dio);
+        setters[5] = l1StandardBridgeConfigSetter(_dii, _dio);
         setters[6] = OPContractsManager.ImplementationSetter({
             name: "DisputeGameFactory",
             info: OPContractsManager.Implementation(
-                address(_dio.disputeGameFactoryImpl()), DisputeGameFactory.initialize.selector
+                address(_dio.disputeGameFactoryImpl()), IDisputeGameFactory.initialize.selector
             )
         });
         setters[7] = OPContractsManager.ImplementationSetter({
             name: "DelayedWETH",
-            info: OPContractsManager.Implementation(address(_dio.delayedWETHImpl()), DelayedWETH.initialize.selector)
+            info: OPContractsManager.Implementation(address(_dio.delayedWETHImpl()), IDelayedWETH.initialize.selector)
         });
         setters[8] = OPContractsManager.ImplementationSetter({
             name: "MIPS",
@@ -611,15 +656,20 @@ contract DeployImplementations is Script {
         string memory stdVerToml = _dii.standardVersionsToml();
         // Using snake case for contract name to match the TOML file in superchain-registry.
         string memory contractName = "system_config";
-        SystemConfig impl;
+        ISystemConfig impl;
 
         address existingImplementation = getReleaseAddress(release, contractName, stdVerToml);
         if (existingImplementation != address(0)) {
-            impl = SystemConfig(existingImplementation);
+            impl = ISystemConfig(existingImplementation);
         } else if (isDevelopRelease(release)) {
             // Deploy a new implementation for development builds.
             vm.broadcast(msg.sender);
-            impl = new SystemConfig();
+            impl = ISystemConfig(
+                DeployUtils.create1({
+                    _name: "SystemConfig",
+                    _args: DeployUtils.encodeConstructor(abi.encodeCall(ISystemConfig.__constructor__, ()))
+                })
+            );
         } else {
             revert(string.concat("DeployImplementations: failed to deploy release ", release));
         }
@@ -638,14 +688,19 @@ contract DeployImplementations is Script {
         string memory release = _dii.release();
         string memory stdVerToml = _dii.standardVersionsToml();
         string memory contractName = "l1_cross_domain_messenger";
-        L1CrossDomainMessenger impl;
+        IL1CrossDomainMessenger impl;
 
         address existingImplementation = getReleaseAddress(release, contractName, stdVerToml);
         if (existingImplementation != address(0)) {
-            impl = L1CrossDomainMessenger(existingImplementation);
+            impl = IL1CrossDomainMessenger(existingImplementation);
         } else if (isDevelopRelease(release)) {
             vm.broadcast(msg.sender);
-            impl = new L1CrossDomainMessenger();
+            impl = IL1CrossDomainMessenger(
+                DeployUtils.create1({
+                    _name: "L1CrossDomainMessenger",
+                    _args: DeployUtils.encodeConstructor(abi.encodeCall(IL1CrossDomainMessenger.__constructor__, ()))
+                })
+            );
         } else {
             revert(string.concat("DeployImplementations: failed to deploy release ", release));
         }
@@ -664,14 +719,19 @@ contract DeployImplementations is Script {
         string memory release = _dii.release();
         string memory stdVerToml = _dii.standardVersionsToml();
         string memory contractName = "l1_erc721_bridge";
-        L1ERC721Bridge impl;
+        IL1ERC721Bridge impl;
 
         address existingImplementation = getReleaseAddress(release, contractName, stdVerToml);
         if (existingImplementation != address(0)) {
-            impl = L1ERC721Bridge(existingImplementation);
+            impl = IL1ERC721Bridge(existingImplementation);
         } else if (isDevelopRelease(release)) {
             vm.broadcast(msg.sender);
-            impl = new L1ERC721Bridge();
+            impl = IL1ERC721Bridge(
+                DeployUtils.create1({
+                    _name: "L1ERC721Bridge",
+                    _args: DeployUtils.encodeConstructor(abi.encodeCall(IL1ERC721Bridge.__constructor__, ()))
+                })
+            );
         } else {
             revert(string.concat("DeployImplementations: failed to deploy release ", release));
         }
@@ -690,14 +750,19 @@ contract DeployImplementations is Script {
         string memory release = _dii.release();
         string memory stdVerToml = _dii.standardVersionsToml();
         string memory contractName = "l1_standard_bridge";
-        L1StandardBridge impl;
+        IL1StandardBridge impl;
 
         address existingImplementation = getReleaseAddress(release, contractName, stdVerToml);
         if (existingImplementation != address(0)) {
-            impl = L1StandardBridge(payable(existingImplementation));
+            impl = IL1StandardBridge(payable(existingImplementation));
         } else if (isDevelopRelease(release)) {
             vm.broadcast(msg.sender);
-            impl = new L1StandardBridge();
+            impl = IL1StandardBridge(
+                DeployUtils.create1({
+                    _name: "L1StandardBridge",
+                    _args: DeployUtils.encodeConstructor(abi.encodeCall(IL1StandardBridge.__constructor__, ()))
+                })
+            );
         } else {
             revert(string.concat("DeployImplementations: failed to deploy release ", release));
         }
@@ -716,14 +781,19 @@ contract DeployImplementations is Script {
         string memory release = _dii.release();
         string memory stdVerToml = _dii.standardVersionsToml();
         string memory contractName = "optimism_mintable_erc20_factory";
-        OptimismMintableERC20Factory impl;
+        IOptimismMintableERC20Factory impl;
 
         address existingImplementation = getReleaseAddress(release, contractName, stdVerToml);
         if (existingImplementation != address(0)) {
-            impl = OptimismMintableERC20Factory(existingImplementation);
+            impl = IOptimismMintableERC20Factory(existingImplementation);
         } else if (isDevelopRelease(release)) {
             vm.broadcast(msg.sender);
-            impl = new OptimismMintableERC20Factory();
+            impl = IOptimismMintableERC20Factory(
+                DeployUtils.create1({
+                    _name: "OptimismMintableERC20Factory",
+                    _args: DeployUtils.encodeConstructor(abi.encodeCall(IOptimismMintableERC20Factory.__constructor__, ()))
+                })
+            );
         } else {
             revert(string.concat("DeployImplementations: failed to deploy release ", release));
         }
@@ -739,8 +809,8 @@ contract DeployImplementations is Script {
         public
         virtual
     {
-        SuperchainConfig superchainConfigProxy = _dii.superchainConfigProxy();
-        ProtocolVersions protocolVersionsProxy = _dii.protocolVersionsProxy();
+        ISuperchainConfig superchainConfigProxy = _dii.superchainConfigProxy();
+        IProtocolVersions protocolVersionsProxy = _dii.protocolVersionsProxy();
 
         vm.broadcast(msg.sender);
         // TODO: Eventually we will want to select the correct implementation based on the release.
@@ -759,10 +829,13 @@ contract DeployImplementations is Script {
     // | AnchorStateRegistry     | Yes     | Bespoke                           | No         |
     // | FaultDisputeGame        | No      | Bespoke                           | No         | Not yet supported by OPCM
     // | PermissionedDisputeGame | No      | Bespoke                           | No         |
-    // | DelayedWETH             | Yes     | Two bespoke (one per DisputeGame) | No         |
+    // | DelayedWETH             | Yes     | Two bespoke (one per DisputeGame) | Yes *️⃣     |
     // | PreimageOracle          | No      | Shared                            | N/A        |
     // | MIPS                    | No      | Shared                            | N/A        |
-    // | OptimismPortal2         | Yes     | Shared                            | No         |
+    // | OptimismPortal2         | Yes     | Shared                            | Yes *️⃣     |
+    //
+    // - *️⃣ These contracts have immutable values which are intended to be constant for all contracts within a
+    //   Superchain, and are therefore MCP ready for any chain using the Standard Configuration.
     //
     // This script only deploys the shared contracts. The bespoke contracts are deployed by
     // `DeployOPChain.s.sol`. When the shared contracts are proxied, the contracts deployed here are
@@ -777,6 +850,12 @@ contract DeployImplementations is Script {
     //
     // For contracts which are not MCP ready neither the Proxy nor the implementation can be shared, therefore they
     // are deployed by `DeployOpChain.s.sol`.
+    // These are:
+    // - AnchorStateRegistry (proxy and implementation)
+    // - FaultDisputeGame (not proxied)
+    // - PermissionedDisputeGame (not proxied)
+    // - DelayedWeth (proxies only)
+    // - OptimismPortal2 (proxies only)
 
     function deployOptimismPortalImpl(
         DeployImplementationsInput _dii,
@@ -788,16 +867,25 @@ contract DeployImplementations is Script {
         string memory release = _dii.release();
         string memory stdVerToml = _dii.standardVersionsToml();
         string memory contractName = "optimism_portal";
-        OptimismPortal2 impl;
+        IOptimismPortal2 impl;
 
         address existingImplementation = getReleaseAddress(release, contractName, stdVerToml);
         if (existingImplementation != address(0)) {
-            impl = OptimismPortal2(payable(existingImplementation));
+            impl = IOptimismPortal2(payable(existingImplementation));
         } else if (isDevelopRelease(release)) {
             uint256 proofMaturityDelaySeconds = _dii.proofMaturityDelaySeconds();
             uint256 disputeGameFinalityDelaySeconds = _dii.disputeGameFinalityDelaySeconds();
             vm.broadcast(msg.sender);
-            impl = new OptimismPortal2(proofMaturityDelaySeconds, disputeGameFinalityDelaySeconds);
+            impl = IOptimismPortal2(
+                DeployUtils.create1({
+                    _name: "OptimismPortal2",
+                    _args: DeployUtils.encodeConstructor(
+                        abi.encodeCall(
+                            IOptimismPortal2.__constructor__, (proofMaturityDelaySeconds, disputeGameFinalityDelaySeconds)
+                        )
+                    )
+                })
+            );
         } else {
             revert(string.concat("DeployImplementations: failed to deploy release ", release));
         }
@@ -810,15 +898,22 @@ contract DeployImplementations is Script {
         string memory release = _dii.release();
         string memory stdVerToml = _dii.standardVersionsToml();
         string memory contractName = "delayed_weth";
-        DelayedWETH impl;
+        IDelayedWETH impl;
 
         address existingImplementation = getReleaseAddress(release, contractName, stdVerToml);
         if (existingImplementation != address(0)) {
-            impl = DelayedWETH(payable(existingImplementation));
+            impl = IDelayedWETH(payable(existingImplementation));
         } else if (isDevelopRelease(release)) {
             uint256 withdrawalDelaySeconds = _dii.withdrawalDelaySeconds();
             vm.broadcast(msg.sender);
-            impl = new DelayedWETH(withdrawalDelaySeconds);
+            impl = IDelayedWETH(
+                DeployUtils.create1({
+                    _name: "DelayedWETH",
+                    _args: DeployUtils.encodeConstructor(
+                        abi.encodeCall(IDelayedWETH.__constructor__, (withdrawalDelaySeconds))
+                    )
+                })
+            );
         } else {
             revert(string.concat("DeployImplementations: failed to deploy release ", release));
         }
@@ -837,16 +932,23 @@ contract DeployImplementations is Script {
         string memory release = _dii.release();
         string memory stdVerToml = _dii.standardVersionsToml();
         string memory contractName = "preimage_oracle";
-        PreimageOracle singleton;
+        IPreimageOracle singleton;
 
         address existingImplementation = getReleaseAddress(release, contractName, stdVerToml);
         if (existingImplementation != address(0)) {
-            singleton = PreimageOracle(payable(existingImplementation));
+            singleton = IPreimageOracle(payable(existingImplementation));
         } else if (isDevelopRelease(release)) {
             uint256 minProposalSizeBytes = _dii.minProposalSizeBytes();
             uint256 challengePeriodSeconds = _dii.challengePeriodSeconds();
             vm.broadcast(msg.sender);
-            singleton = new PreimageOracle(minProposalSizeBytes, challengePeriodSeconds);
+            singleton = IPreimageOracle(
+                DeployUtils.create1({
+                    _name: "PreimageOracle",
+                    _args: DeployUtils.encodeConstructor(
+                        abi.encodeCall(IPreimageOracle.__constructor__, (minProposalSizeBytes, challengePeriodSeconds))
+                    )
+                })
+            );
         } else {
             revert(string.concat("DeployImplementations: failed to deploy release ", release));
         }
@@ -859,15 +961,21 @@ contract DeployImplementations is Script {
         string memory release = _dii.release();
         string memory stdVerToml = _dii.standardVersionsToml();
         string memory contractName = "mips";
-        MIPS singleton;
+        IMIPS singleton;
 
         address existingImplementation = getReleaseAddress(release, contractName, stdVerToml);
         if (existingImplementation != address(0)) {
-            singleton = MIPS(payable(existingImplementation));
+            singleton = IMIPS(payable(existingImplementation));
         } else if (isDevelopRelease(release)) {
-            IPreimageOracle preimageOracle = IPreimageOracle(_dio.preimageOracleSingleton());
+            uint256 mipsVersion = _dii.mipsVersion();
+            IPreimageOracle preimageOracle = IPreimageOracle(address(_dio.preimageOracleSingleton()));
             vm.broadcast(msg.sender);
-            singleton = new MIPS(preimageOracle);
+            singleton = IMIPS(
+                DeployUtils.create1({
+                    _name: mipsVersion == 1 ? "MIPS" : "MIPS2",
+                    _args: DeployUtils.encodeConstructor(abi.encodeCall(IMIPS.__constructor__, (preimageOracle)))
+                })
+            );
         } else {
             revert(string.concat("DeployImplementations: failed to deploy release ", release));
         }
@@ -886,14 +994,19 @@ contract DeployImplementations is Script {
         string memory release = _dii.release();
         string memory stdVerToml = _dii.standardVersionsToml();
         string memory contractName = "dispute_game_factory";
-        DisputeGameFactory impl;
+        IDisputeGameFactory impl;
 
         address existingImplementation = getReleaseAddress(release, contractName, stdVerToml);
         if (existingImplementation != address(0)) {
-            impl = DisputeGameFactory(payable(existingImplementation));
+            impl = IDisputeGameFactory(payable(existingImplementation));
         } else if (isDevelopRelease(release)) {
             vm.broadcast(msg.sender);
-            impl = new DisputeGameFactory();
+            impl = IDisputeGameFactory(
+                DeployUtils.create1({
+                    _name: "DisputeGameFactory",
+                    _args: DeployUtils.encodeConstructor(abi.encodeCall(IDisputeGameFactory.__constructor__, ()))
+                })
+            );
         } else {
             revert(string.concat("DeployImplementations: failed to deploy release ", release));
         }
@@ -1016,10 +1129,15 @@ contract DeployImplementationsInterop is DeployImplementations {
         override
         returns (OPContractsManager opcmProxy_)
     {
-        ProxyAdmin proxyAdmin = _dii.superchainProxyAdmin();
+        address opcmProxyOwner = _dii.opcmProxyOwner();
 
         vm.broadcast(msg.sender);
-        Proxy proxy = new Proxy(address(msg.sender));
+        IProxy proxy = IProxy(
+            DeployUtils.create1({
+                _name: "Proxy",
+                _args: DeployUtils.encodeConstructor(abi.encodeCall(IProxy.__constructor__, (msg.sender)))
+            })
+        );
 
         deployOPContractsManagerImpl(_dii, _dio); // overriding function
         OPContractsManager opcmImpl = _dio.opcmImpl();
@@ -1032,7 +1150,7 @@ contract DeployImplementationsInterop is DeployImplementations {
             address(opcmImpl), abi.encodeWithSelector(opcmImpl.initialize.selector, initializerInputs)
         );
 
-        proxy.changeAdmin(address(proxyAdmin)); // transfer ownership of Proxy contract to the ProxyAdmin contract
+        proxy.changeAdmin(opcmProxyOwner); // transfer ownership of Proxy contract to the ProxyAdmin contract
         vm.stopBroadcast();
 
         opcmProxy_ = OPContractsManagerInterop(address(proxy));
@@ -1048,16 +1166,26 @@ contract DeployImplementationsInterop is DeployImplementations {
         string memory release = _dii.release();
         string memory stdVerToml = _dii.standardVersionsToml();
         string memory contractName = "optimism_portal";
-        OptimismPortal2 impl;
+        IOptimismPortalInterop impl;
 
         address existingImplementation = getReleaseAddress(release, contractName, stdVerToml);
         if (existingImplementation != address(0)) {
-            impl = OptimismPortalInterop(payable(existingImplementation));
+            impl = IOptimismPortalInterop(payable(existingImplementation));
         } else if (isDevelopRelease(release)) {
             uint256 proofMaturityDelaySeconds = _dii.proofMaturityDelaySeconds();
             uint256 disputeGameFinalityDelaySeconds = _dii.disputeGameFinalityDelaySeconds();
             vm.broadcast(msg.sender);
-            impl = new OptimismPortalInterop(proofMaturityDelaySeconds, disputeGameFinalityDelaySeconds);
+            impl = IOptimismPortalInterop(
+                DeployUtils.create1({
+                    _name: "OptimismPortalInterop",
+                    _args: DeployUtils.encodeConstructor(
+                        abi.encodeCall(
+                            IOptimismPortalInterop.__constructor__,
+                            (proofMaturityDelaySeconds, disputeGameFinalityDelaySeconds)
+                        )
+                    )
+                })
+            );
         } else {
             revert(string.concat("DeployImplementations: failed to deploy release ", release));
         }
@@ -1077,14 +1205,19 @@ contract DeployImplementationsInterop is DeployImplementations {
         string memory stdVerToml = _dii.standardVersionsToml();
 
         string memory contractName = "system_config";
-        SystemConfig impl;
+        ISystemConfigInterop impl;
 
         address existingImplementation = getReleaseAddress(release, contractName, stdVerToml);
         if (existingImplementation != address(0)) {
-            impl = SystemConfigInterop(existingImplementation);
+            impl = ISystemConfigInterop(existingImplementation);
         } else if (isDevelopRelease(release)) {
             vm.broadcast(msg.sender);
-            impl = new SystemConfigInterop();
+            impl = ISystemConfigInterop(
+                DeployUtils.create1({
+                    _name: "SystemConfigInterop",
+                    _args: DeployUtils.encodeConstructor(abi.encodeCall(ISystemConfigInterop.__constructor__, ()))
+                })
+            );
         } else {
             revert(string.concat("DeployImplementations: failed to deploy release ", release));
         }
@@ -1100,8 +1233,8 @@ contract DeployImplementationsInterop is DeployImplementations {
         public
         override
     {
-        SuperchainConfig superchainConfigProxy = _dii.superchainConfigProxy();
-        ProtocolVersions protocolVersionsProxy = _dii.protocolVersionsProxy();
+        ISuperchainConfig superchainConfigProxy = _dii.superchainConfigProxy();
+        IProtocolVersions protocolVersionsProxy = _dii.protocolVersionsProxy();
 
         vm.broadcast(msg.sender);
         // TODO: Eventually we will want to select the correct implementation based on the release.
@@ -1123,7 +1256,7 @@ contract DeployImplementationsInterop is DeployImplementations {
         return OPContractsManager.ImplementationSetter({
             name: "SystemConfig",
             info: OPContractsManager.Implementation(
-                address(_dio.systemConfigImpl()), SystemConfigInterop.initialize.selector
+                address(_dio.systemConfigImpl()), ISystemConfigInterop.initialize.selector
             )
         });
     }

@@ -57,8 +57,8 @@ contract MIPS2 is ISemver {
     }
 
     /// @notice The semantic version of the MIPS2 contract.
-    /// @custom:semver 1.0.0-beta.11
-    string public constant version = "1.0.0-beta.11";
+    /// @custom:semver 1.0.0-beta.15
+    string public constant version = "1.0.0-beta.15";
 
     /// @notice The preimage oracle contract.
     IPreimageOracle internal immutable ORACLE;
@@ -162,8 +162,11 @@ contract MIPS2 is ISemver {
                 return outputState();
             }
 
-            if (state.leftThreadStack == EMPTY_THREAD_ROOT && state.rightThreadStack == EMPTY_THREAD_ROOT) {
-                revert("MIPS2: illegal vm state");
+            if (
+                (state.leftThreadStack == EMPTY_THREAD_ROOT && !state.traverseRight)
+                    || (state.rightThreadStack == EMPTY_THREAD_ROOT && state.traverseRight)
+            ) {
+                revert("MIPS2: active thread stack is empty");
             }
 
             state.step += 1;
@@ -534,7 +537,7 @@ contract MIPS2 is ISemver {
                 // ignored
             } else if (syscall_no == sys.SYS_PREAD64) {
                 // ignored
-            } else if (syscall_no == sys.SYS_FSTAT64) {
+            } else if (syscall_no == sys.SYS_FSTAT) {
                 // ignored
             } else if (syscall_no == sys.SYS_OPENAT) {
                 // ignored
@@ -556,13 +559,9 @@ contract MIPS2 is ISemver {
                 // ignored
             } else if (syscall_no == sys.SYS_UNAME) {
                 // ignored
-            } else if (syscall_no == sys.SYS_STAT64) {
-                // ignored
             } else if (syscall_no == sys.SYS_GETUID) {
                 // ignored
             } else if (syscall_no == sys.SYS_GETGID) {
-                // ignored
-            } else if (syscall_no == sys.SYS_LLSEEK) {
                 // ignored
             } else if (syscall_no == sys.SYS_MINCORE) {
                 // ignored
@@ -577,7 +576,11 @@ contract MIPS2 is ISemver {
             } else if (syscall_no == sys.SYS_TIMERDELETE) {
                 // ignored
             } else {
-                revert("MIPS2: unimplemented syscall");
+                if (syscall_no == sys.SYS_FSTAT64 || syscall_no == sys.SYS_STAT64 || syscall_no == sys.SYS_LLSEEK) {
+                    // noop
+                } else {
+                    revert("MIPS2: unimplemented syscall");
+                }
             }
 
             st.CpuScalars memory cpu = getCpuScalars(thread);
@@ -595,11 +598,11 @@ contract MIPS2 is ISemver {
     )
         internal
         view
-        returns (uint32 v0, uint32 v1)
+        returns (uint32 v0_, uint32 v1_)
     {
         bool memUpdated;
         uint32 memAddr;
-        (v0, v1, _state.preimageOffset, _state.memRoot, memUpdated, memAddr) = sys.handleSysRead(_args);
+        (v0_, v1_, _state.preimageOffset, _state.memRoot, memUpdated, memAddr) = sys.handleSysRead(_args);
         if (memUpdated) {
             handleMemoryUpdate(_state, memAddr);
         }
@@ -717,7 +720,7 @@ contract MIPS2 is ISemver {
     )
         internal
         pure
-        returns (bool _changedDirections)
+        returns (bool changedDirections_)
     {
         // pop thread from the current stack and push to the other stack
         if (_state.traverseRight) {
@@ -732,7 +735,7 @@ contract MIPS2 is ISemver {
         bytes32 current = _state.traverseRight ? _state.rightThreadStack : _state.leftThreadStack;
         if (current == EMPTY_THREAD_ROOT) {
             _state.traverseRight = !_state.traverseRight;
-            _changedDirections = true;
+            changedDirections_ = true;
         }
         _state.stepsSinceLastContextSwitch = 0;
     }
@@ -768,10 +771,10 @@ contract MIPS2 is ISemver {
         return inactiveStack == EMPTY_THREAD_ROOT && currentStackIsAlmostEmpty;
     }
 
-    function computeThreadRoot(bytes32 _currentRoot, ThreadState memory _thread) internal pure returns (bytes32 _out) {
+    function computeThreadRoot(bytes32 _currentRoot, ThreadState memory _thread) internal pure returns (bytes32 out_) {
         // w_i = hash(w_0 ++ hash(thread))
         bytes32 threadRoot = outputThreadState(_thread);
-        _out = keccak256(abi.encodePacked(_currentRoot, threadRoot));
+        out_ = keccak256(abi.encodePacked(_currentRoot, threadRoot));
     }
 
     function outputThreadState(ThreadState memory _thread) internal pure returns (bytes32 out_) {

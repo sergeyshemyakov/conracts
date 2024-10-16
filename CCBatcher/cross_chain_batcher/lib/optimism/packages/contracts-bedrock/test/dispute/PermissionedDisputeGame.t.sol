@@ -3,7 +3,6 @@ pragma solidity ^0.8.15;
 
 // Testing
 import { Test } from "forge-std/Test.sol";
-import { Vm } from "forge-std/Vm.sol";
 import { DisputeGameFactory_Init } from "test/dispute/DisputeGameFactory.t.sol";
 import { AlphabetVM } from "test/mocks/AlphabetVM.sol";
 
@@ -13,12 +12,11 @@ import { PreimageOracle } from "src/cannon/PreimageOracle.sol";
 import { DelayedWETH } from "src/dispute/DelayedWETH.sol";
 
 // Libraries
-import { Types } from "src/libraries/Types.sol";
 import "src/dispute/lib/Types.sol";
 import "src/dispute/lib/Errors.sol";
 
 // Interfaces
-import { IBigStepper, IPreimageOracle } from "src/dispute/interfaces/IBigStepper.sol";
+import { IPreimageOracle } from "src/dispute/interfaces/IBigStepper.sol";
 import { IDelayedWETH } from "src/dispute/interfaces/IDelayedWETH.sol";
 import { IPermissionedDisputeGame } from "src/dispute/interfaces/IPermissionedDisputeGame.sol";
 
@@ -47,7 +45,7 @@ contract PermissionedDisputeGame_Init is DisputeGameFactory_Init {
         // Set the extra data for the game creation
         extraData = abi.encode(l2BlockNumber);
 
-        AlphabetVM _vm = new AlphabetVM(absolutePrestate, new PreimageOracle(0, 0));
+        AlphabetVM _vm = new AlphabetVM(absolutePrestate, IPreimageOracle(address(new PreimageOracle(0, 0))));
 
         // Use a 7 day delayed WETH to simulate withdrawals.
         IDelayedWETH _weth = IDelayedWETH(payable(new DelayedWETH(7 days)));

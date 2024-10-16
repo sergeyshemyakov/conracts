@@ -3,11 +3,9 @@ pragma solidity 0.8.15;
 
 // Testing
 import { CommonTest } from "test/setup/CommonTest.sol";
-import { EIP1967Helper } from "test/mocks/EIP1967Helper.sol";
 
 // Contracts
 import { ERC20 } from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import { Proxy } from "src/universal/Proxy.sol";
 
 // Libraries
 import { Constants } from "src/libraries/Constants.sol";
@@ -313,6 +311,7 @@ contract SystemConfig_Init_CustomGasToken is SystemConfig_Init {
     function setUp() public override {
         token = new ERC20("Silly", "SIL");
         super.enableCustomGasToken(address(token));
+        super.enableFaultProofs();
         super.setUp();
     }
 
