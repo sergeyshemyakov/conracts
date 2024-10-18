@@ -8,8 +8,10 @@ import {Predeploys} from "lib/optimism/packages/contracts-bedrock/src/libraries/
 import {IERC20} from "lib/forge-std/src/interfaces/IERC20.sol";
 
 contract TestApplication {
-    modifier dependsOnMessage(bytes32 _prevMsgHash) {
-        require(_prevMsgHash == 0 || MESSENGER.successfulMessages(_prevMsgHash));
+    modifier dependsOnMessage(bytes32[] calldata _prevMsgHashes) {
+        for (uint256 i = 0; i < _prevMsgHashes.length; ++i) {
+            require(_prevMsgHashes[i] == 0 || MESSENGER.successfulMessages(_prevMsgHashes[i]));
+        }
         _;
     }
 
@@ -24,14 +26,19 @@ contract TestApplication {
         require(_amount > _tip, "Total amount must be bigger than tip");
 
         bytes32 _msgHash = BRIDGE.sendERC20(_token, _to, _amount, _chainId);
-        bytes memory _message = abi.encodeCall(this.relayERC20WithTip, (_token, _to, _amount, _tip, _msgHash));
+        bytes32[] memory _msgHashes = new bytes32[](1);
+        _msgHashes[0] = _msgHash;
+        bytes memory _message = abi.encodeCall(this.relayERC20WithTip, (_token, _to, _amount, _tip, _msgHashes));
         msgHash = MESSENGER.sendMessage(_chainId, address(this), _message);
     }
 
-    function relayERC20WithTip(address _token, address _to, uint256 _amount, uint256 _tip, bytes32 _prevMsgHash)
-        external
-        dependsOnMessage(_prevMsgHash)
-    {
+    function relayERC20WithTip(
+        address _token,
+        address _to,
+        uint256 _amount,
+        uint256 _tip,
+        bytes32[] calldata _prevMsgHashes
+    ) external dependsOnMessage(_prevMsgHashes) {
         require(msg.sender == address(MESSENGER), "Not from sequenced relayer");
         require(MESSENGER.crossDomainMessageSender() == address(this), "Wrong message source on the other chain");
 
