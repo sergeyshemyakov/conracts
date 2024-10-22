@@ -16,6 +16,8 @@ interface ICrossChainWallet {
      * chain once relayed. Relaying of the sent message can depend on other cross-chain messages
      * being successfully relayed before.
      *
+     * @dev Must be called by a verified user owner (e.g. from a known EOA or a user operation with
+     * a verified signature).
      * @param _chainId          Chain ID of the target chain where the transaction should be executed.
      * @param _dest             Address of the target contract to be called in the transaction.
      * @param _value            ETH value associated with the transaction call.

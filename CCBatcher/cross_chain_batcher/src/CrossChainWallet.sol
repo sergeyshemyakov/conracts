@@ -17,6 +17,8 @@ contract CrossChainWallet is ICrossChainWallet {
         IL2ToL2CrossDomainMessenger(Predeploys.L2_TO_L2_CROSS_DOMAIN_MESSENGER);
     SuperchainTokenBridge BRIDGE = SuperchainTokenBridge(Predeploys.SUPERCHAIN_TOKEN_BRIDGE);
 
+    address immutable OWNER;
+
     modifier dependsOnMessages(bytes32[] calldata _prevMsgHashes) {
         for (uint256 i = 0; i < _prevMsgHashes.length; ++i) {
             require(_prevMsgHashes[i] == 0 || MESSENGER.successfulMessages(_prevMsgHashes[i]));
@@ -34,6 +36,15 @@ contract CrossChainWallet is ICrossChainWallet {
         _;
     }
 
+    modifier onlyOwner() {
+        require(msg.sender == OWNER, "Can be called only by wallet owner");
+        _;
+    }
+
+    constructor() {
+        OWNER = msg.sender;
+    }
+
     function crossDomainMessenger() external pure returns (IL2ToL2CrossDomainMessenger messenger) {
         return MESSENGER;
     }
@@ -45,7 +56,7 @@ contract CrossChainWallet is ICrossChainWallet {
         uint256 _value,
         bytes calldata _calldata,
         bytes32[] calldata _prevMsgHashes
-    ) external returns (bytes32 msgHash) {
+    ) external onlyOwner returns (bytes32 msgHash) {
         bytes memory _message = abi.encodeCall(this.relayCrossChainTrx, (_dest, _value, _calldata, _prevMsgHashes));
         msgHash = MESSENGER.sendMessage(_chainId, address(this), _message);
     }
@@ -70,7 +81,7 @@ contract CrossChainWallet is ICrossChainWallet {
         bytes calldata _calldata,
         address _token,
         uint256 _tip
-    ) external {
+    ) external onlyOwner {
         bytes32 _msgHash1 = BRIDGE.sendERC20(_token, address(this), _tip, _chainId);
         bytes32[] memory _msgHashes = new bytes32[](2);
         _msgHashes[0] = _msgHash1;
