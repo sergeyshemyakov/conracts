@@ -18,6 +18,8 @@ contract CrossChainWallet is ICrossChainWallet {
     SuperchainTokenBridge BRIDGE = SuperchainTokenBridge(Predeploys.SUPERCHAIN_TOKEN_BRIDGE);
 
     address immutable OWNER;
+    uint256 public testFlag;
+    address public lastRelayer;
 
     modifier dependsOnMessages(bytes32[] calldata _prevMsgHashes) {
         for (uint256 i = 0; i < _prevMsgHashes.length; ++i) {
@@ -92,6 +94,37 @@ contract CrossChainWallet is ICrossChainWallet {
         MESSENGER.sendMessage(_chainId, address(this), _message2);
     }
 
+    /**
+     * Test function to send a message cross-chain. Sets the flag to 1 on the sending chain.
+     * Pays no relayer tip and sends only one cross-chain message.
+     */
+    function sendSetTestFlag(uint256 _chainId) external {
+        testFlag = 1;
+        bytes memory _message = abi.encodeCall(this.relaySetTestFlag, ());
+        MESSENGER.sendMessage(_chainId, address(this), _message);
+    }
+
+    function sendSetTestFlagWithTip(uint256 _chainId, address _token, uint256 _tip) external {
+        testFlag = 3;
+        bytes32 _msgHash1 = BRIDGE.sendERC20(_token, address(this), _tip, _chainId);
+        bytes32[] memory _msgHashes = new bytes32[](2);
+        _msgHashes[0] = _msgHash1;
+        bytes memory _message1 = abi.encodeCall(this.relaySetTestFlag, ());
+        bytes32 _msgHash2 = MESSENGER.sendMessage(_chainId, address(this), _message1);
+        _msgHashes[1] = _msgHash2;
+        bytes memory _message2 = abi.encodeCall(this.relayTipRelayer, (_token, _tip, _msgHashes));
+        MESSENGER.sendMessage(_chainId, address(this), _message2);
+    }
+
+    /**
+     * Test function to be called cross-chain. Once executed succesfully, sets test flag to 2.
+     * Does not depend on any other messages. Pays no relayer tip.
+     */
+    function relaySetTestFlag() external onlyFromAnotherCrossChainInstance onlyFromMessenger {
+        testFlag = 2;
+        lastRelayer = tx.origin;
+    }
+
     /// @inheritdoc ICrossChainWallet
     function relayCrossChainTrx(
         address _dest,
@@ -119,6 +152,7 @@ contract CrossChainWallet is ICrossChainWallet {
         onlyFromMessenger
     {
         IERC20(_token).transfer(tx.origin, _tip);
+        lastRelayer = tx.origin;
     }
 
     function _call(address target, uint256 value, bytes memory data) internal {
