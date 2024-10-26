@@ -4,7 +4,7 @@ pragma solidity >=0.8.25;
 import {Script, console2} from "forge-std/Script.sol";
 import {CrossChainWallet} from "../src/CrossChainWallet.sol";
 
-// 0x6B48c8134760B85637872D3dedD6DdfDa467037D
+// 0x7c840Bf42d848A97D59168e6C0CAA95E5464835d
 contract CrossChainWalletScript is Script {
     function run() public {
         // Deployer's private key. Owner of the Claim contract which can perform upgrades. PRIVATE_KEY is set in .env

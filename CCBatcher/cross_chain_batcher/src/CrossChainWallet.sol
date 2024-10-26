@@ -44,7 +44,8 @@ contract CrossChainWallet is ICrossChainWallet {
     }
 
     constructor() {
-        OWNER = msg.sender;
+        // OWNER = msg.sender;
+        OWNER = address(0x70997970C51812dc3A010C7d01b50e0d17dc79C8);
     }
 
     function crossDomainMessenger() external pure returns (IL2ToL2CrossDomainMessenger messenger) {
